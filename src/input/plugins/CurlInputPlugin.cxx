@@ -151,6 +151,7 @@ static unsigned proxy_port;
 static const char *cacert;
 
 static bool verify_peer, verify_host;
+static bool force_seek;
 
 static CurlInit *curl_init;
 
@@ -292,6 +293,9 @@ CurlInputStream::OnHeaders(unsigned status,
 		}
 	}
 
+	if (force_seek)
+ 		seekable = true;
+
 	SetReady();
 }
 
@@ -366,6 +370,7 @@ input_curl_init(EventLoop &event_loop, const ConfigBlock &block)
 	proxy_port = block.GetBlockValue("proxy_port", 0U);
 	proxy_user = block.GetBlockValue("proxy_user");
 	proxy_password = block.GetBlockValue("proxy_password");
+	force_seek = block.GetBlockValue("force_seek", false);
 
 #ifdef ANDROID
 	// TODO: figure out how to use Android's CA certificates and re-enable verify
