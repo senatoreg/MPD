@@ -1,34 +1,9 @@
-/*
- * Copyright 2013-2021 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
 #include "HugeAllocator.hxx"
-#include "Compiler.h"
+#include "system/VmaName.hxx"
+#include "util/RoundPowerOfTwo.hxx"
 
 #include <new>
 
@@ -44,7 +19,7 @@
 /**
  * Round up the parameter, make it page-aligned.
  */
-gcc_const
+[[gnu::const]]
 static size_t
 AlignToPageSize(size_t size) noexcept
 {
@@ -52,11 +27,10 @@ AlignToPageSize(size_t size) noexcept
 	if (page_size <= 0)
 		return size;
 
-	size_t ps(page_size);
-	return (size + ps - 1) / ps * ps;
+	return RoundUpToPowerOfTwo(size, static_cast<std::size_t>(page_size));
 }
 
-WritableBuffer<void>
+std::span<std::byte>
 HugeAllocate(size_t size)
 {
 	size = AlignToPageSize(size);
@@ -74,13 +48,19 @@ HugeAllocate(size_t size)
 	madvise(p, size, MADV_HUGEPAGE);
 #endif
 
-	return {p, size};
+	return {(std::byte *)p, size};
 }
 
 void
 HugeFree(void *p, size_t size) noexcept
 {
 	munmap(p, AlignToPageSize(size));
+}
+
+void
+HugeSetName(void *p, size_t size, const char *name) noexcept
+{
+	SetVmaName(p, size, name);
 }
 
 void
@@ -102,7 +82,7 @@ HugeDiscard(void *p, size_t size) noexcept
 
 #elif defined(_WIN32)
 
-WritableBuffer<void>
+std::span<std::byte>
 HugeAllocate(size_t size)
 {
 	// TODO: use MEM_LARGE_PAGES
@@ -113,7 +93,7 @@ HugeAllocate(size_t size)
 		throw std::bad_alloc();
 
 	// TODO: round size up to the page size
-	return {p, size};
+	return {(std::byte *)p, size};
 }
 
 #endif

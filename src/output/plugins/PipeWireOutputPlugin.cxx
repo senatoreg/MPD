@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "PipeWireOutputPlugin.hxx"
 #include "lib/pipewire/Error.hxx"
@@ -28,9 +12,10 @@
 #include "system/Error.hxx"
 #include "util/BitReverse.hxx"
 #include "util/Domain.hxx"
+#include "util/RingBuffer.hxx"
 #include "util/ScopeExit.hxx"
+#include "util/StaticVector.hxx"
 #include "util/StringCompare.hxx"
-#include "util/WritableBuffer.hxx"
 #include "Log.hxx"
 #include "tag/Format.hxx"
 #include "config.h" // for ENABLE_DSD
@@ -39,8 +24,6 @@
 #pragma GCC diagnostic push
 /* oh no, libspa likes to cast away "const"! */
 #pragma GCC diagnostic ignored "-Wcast-qual"
-/* suppress more annoying warnings */
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 
 #include <pipewire/pipewire.h>
@@ -52,8 +35,6 @@
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
-
-#include <boost/lockfree/spsc_queue.hpp>
 
 #include <algorithm>
 #include <array>
@@ -82,8 +63,8 @@ class PipeWireOutput final : AudioOutput {
 	/**
 	 * This buffer passes PCM data from Play() to Process().
 	 */
-	using RingBuffer = boost::lockfree::spsc_queue<std::byte>;
-	RingBuffer *ring_buffer;
+	using RingBuffer = ::RingBuffer<std::byte>;
+	RingBuffer ring_buffer;
 
 	uint32_t target_id = PW_ID_ANY;
 
@@ -291,7 +272,7 @@ private:
 	}
 
 	[[nodiscard]] std::chrono::steady_clock::duration Delay() const noexcept override;
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 
 	void Drain() override;
 	void Cancel() noexcept override;
@@ -573,9 +554,7 @@ PipeWireOutput::Open(AudioFormat &audio_format)
 	interrupted = false;
 
 	/* allocate a ring buffer of 0.5 seconds */
-	const std::size_t ring_buffer_size =
-		frame_size * (audio_format.sample_rate / 2);
-	ring_buffer = new RingBuffer(ring_buffer_size);
+	ring_buffer = RingBuffer{frame_size * (audio_format.sample_rate / 2)};
 
 	const struct spa_pod *params[1];
 
@@ -627,12 +606,12 @@ PipeWireOutput::Close() noexcept
 		stream = nullptr;
 	}
 
-	delete ring_buffer;
+	ring_buffer = {};
 }
 
 inline void
 PipeWireOutput::StateChanged(enum pw_stream_state state,
-			     [[maybe_unused]] const char *error) noexcept
+			     const char *error) noexcept
 {
 	const bool was_disconnected = disconnected;
 	disconnected = state == PW_STREAM_STATE_ERROR ||
@@ -728,16 +707,10 @@ Interleave(std::byte *data, std::byte *end,
 }
 
 static void
-BitReverse(uint8_t *data, std::size_t n) noexcept
-{
-	while (n-- > 0)
-		*data = bit_reverse(*data);
-}
-
-static void
 BitReverse(std::byte *data, std::size_t n) noexcept
 {
-	BitReverse((uint8_t *)data, n);
+	while (n-- > 0)
+		*data = BitReverse(*data);
 }
 
 static void
@@ -775,25 +748,17 @@ PipeWireOutput::Process() noexcept
 	if (dest == nullptr)
 		return;
 
-	std::size_t max_frames = d.maxsize / frame_size;
+	std::size_t chunk_size = frame_size;
 
 #if defined(ENABLE_DSD) && defined(SPA_AUDIO_DSD_FLAG_NONE)
 	if (use_dsd && dsd_interleave > 1) {
 		/* make sure we don't get partial interleave frames */
-		std::size_t interleave_size = frame_size * dsd_interleave;
-		std::size_t available_bytes = ring_buffer->read_available();
-		std::size_t available_interleaves =
-			available_bytes / interleave_size;
-		std::size_t available_frames =
-			available_interleaves * dsd_interleave;
-		if (max_frames > available_frames)
-			max_frames = available_frames;
+		chunk_size *= dsd_interleave;
 	}
 #endif
 
-	const std::size_t max_size = max_frames * frame_size;
-	size_t nbytes = ring_buffer->pop(dest, max_size);
-	assert(nbytes % frame_size == 0);
+	size_t nbytes = ring_buffer.ReadFramesTo({dest, d.maxsize}, chunk_size);
+	assert(nbytes % chunk_size == 0);
 	if (nbytes == 0) {
 		if (drain_requested) {
 			pw_stream_flush(stream, true);
@@ -801,8 +766,9 @@ PipeWireOutput::Process() noexcept
 		}
 
 		/* buffer underrun: generate some silence */
-		PcmSilence({dest, max_size}, sample_format);
-		nbytes = max_size;
+		std::size_t max_chunks = d.maxsize / chunk_size;
+		nbytes = max_chunks * chunk_size;
+		PcmSilence({dest, nbytes}, sample_format);
 
 		LogWarning(pipewire_output_domain, "Decoder is too slow; playing silence to avoid xrun");
 	}
@@ -836,8 +802,8 @@ PipeWireOutput::Delay() const noexcept
 	return result;
 }
 
-size_t
-PipeWireOutput::Play(const void *chunk, size_t size)
+std::size_t
+PipeWireOutput::Play(std::span<const std::byte> src)
 {
 	const PipeWire::ThreadLoopLock lock(thread_loop);
 
@@ -847,7 +813,7 @@ PipeWireOutput::Play(const void *chunk, size_t size)
 		CheckThrowError();
 
 		std::size_t bytes_written =
-			ring_buffer->push((const std::byte *)chunk, size);
+			ring_buffer.WriteFrom(src);
 		if (bytes_written > 0) {
 			drained = false;
 			return bytes_written;
@@ -903,7 +869,7 @@ PipeWireOutput::Cancel() noexcept
 		return;
 
 	/* clear MPD's ring buffer */
-	ring_buffer->reset();
+	ring_buffer.Clear();
 
 	/* clear libpipewire's buffer */
 	pw_stream_flush(stream, false);
@@ -950,28 +916,28 @@ PipeWireOutput::SendTag(const Tag &tag)
 {
 	CheckThrowError();
 
-	struct spa_dict_item items[3];
-	uint32_t n_items=0;
+	static constexpr struct {
+		TagType mpd;
+		const char *pipewire;
+	} tag_map[] = {
+		{ TAG_ARTIST, PW_KEY_MEDIA_ARTIST },
+		{ TAG_TITLE, PW_KEY_MEDIA_TITLE },
+		{ TAG_DATE, PW_KEY_MEDIA_DATE },
+		{ TAG_COMMENT, PW_KEY_MEDIA_COMMENT },
+	};
 
-	const char *artist, *title;
+	StaticVector<spa_dict_item, 1 + std::size(tag_map)> items;
 
 	char *medianame = FormatTag(tag, "%artist% - %title%");
 	AtScopeExit(medianame) { free(medianame); };
 
-	items[n_items++] = SPA_DICT_ITEM_INIT(PW_KEY_MEDIA_NAME, medianame);
+	items.push_back(SPA_DICT_ITEM_INIT(PW_KEY_MEDIA_NAME, medianame));
 
-	artist = tag.GetValue(TAG_ARTIST);
-	title = tag.GetValue(TAG_TITLE);
+	for (const auto &i : tag_map)
+		if (const char *value = tag.GetValue(i.mpd))
+			items.push_back(SPA_DICT_ITEM_INIT(i.pipewire, value));
 
-	if (artist != nullptr) {
-		items[n_items++] = SPA_DICT_ITEM_INIT(PW_KEY_MEDIA_ARTIST, artist);
-	}
-
-	if (title != nullptr) {
-		items[n_items++] = SPA_DICT_ITEM_INIT(PW_KEY_MEDIA_TITLE, title);
-	}
-
-	struct spa_dict dict = SPA_DICT_INIT(items, n_items);
+	struct spa_dict dict = SPA_DICT_INIT(items.data(), (uint32_t)items.size());
 
 	const PipeWire::ThreadLoopLock lock(thread_loop);
 

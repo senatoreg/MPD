@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_FS_ALLOCATED_PATH_HXX
 #define MPD_FS_ALLOCATED_PATH_HXX
@@ -83,6 +67,18 @@ public:
 	[[gnu::pure]]
 	operator Path() const noexcept {
 		return Path::FromFS(c_str());
+	}
+
+	/**
+	 * Concatenate two paths.
+	 */
+	[[gnu::pure]]
+	static AllocatedPath Concat(string_view a, string_view b) noexcept {
+		AllocatedPath result{nullptr};
+		result.value.reserve(a.size() + b.size());
+		result.value.assign(a);
+		result.value.append(b);
+		return result;
 	}
 
 	/**
@@ -268,11 +264,11 @@ public:
 	 */
 	[[gnu::pure]]
 	std::string ToUTF8() const noexcept {
-		return ((Path)*this).ToUTF8();
+		return Path{*this}.ToUTF8();
 	}
 
 	std::string ToUTF8Throw() const {
-		return ((Path)*this).ToUTF8Throw();
+		return Path{*this}.ToUTF8Throw();
 	}
 
 	/**
@@ -281,7 +277,7 @@ public:
 	 */
 	[[gnu::pure]]
 	AllocatedPath GetDirectoryName() const noexcept {
-		return ((Path)*this).GetDirectoryName();
+		return Path{*this}.GetDirectoryName();
 	}
 
 	/**
@@ -295,9 +291,43 @@ public:
 		return Traits::Relative(c_str(), other_fs.c_str());
 	}
 
+	/**
+	 * Returns the filename suffix (including the dot) or nullptr
+	 * if the path does not have one.
+	 */
 	[[gnu::pure]]
 	const_pointer GetSuffix() const noexcept {
-		return ((Path)*this).GetSuffix();
+		return Path{*this}.GetSuffix();
+	}
+
+	/**
+	 * Replace the suffix of this path (or append the suffix if
+	 * there is none currently).
+	 *
+	 * @param new_suffix the new filename suffix (must start with
+	 * a dot)
+	 */
+	void SetSuffix(const_pointer new_suffix) noexcept;
+
+	/**
+	 * Return a copy of this path but with the given suffix
+	 * (replacing the existing suffix if there is one).
+	 *
+	 * @param new_suffix the new filename suffix (must start with
+	 * a dot)
+	 */
+	[[gnu::pure]]
+	AllocatedPath WithSuffix(const_pointer new_suffix) const noexcept {
+		return Path{*this}.WithSuffix(new_suffix);
+	}
+
+	/**
+	 * Returns the filename extension (excluding the dot) or
+	 * nullptr if the path does not have one.
+	 */
+	[[gnu::pure]]
+	const_pointer GetExtension() const noexcept {
+		return Path{*this}.GetExtension();
 	}
 
 	/**
@@ -307,7 +337,7 @@ public:
 
 	[[gnu::pure]]
 	bool IsAbsolute() const noexcept {
-		return Traits::IsAbsolute(c_str());
+		return Traits::IsAbsolute(value);
 	}
 };
 

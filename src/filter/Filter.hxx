@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_FILTER_HXX
 #define MPD_FILTER_HXX
@@ -23,8 +7,8 @@
 #include "pcm/AudioFormat.hxx"
 
 #include <cassert>
-
-template<typename T> struct ConstBuffer;
+#include <cstddef>
+#include <span>
 
 class Filter {
 protected:
@@ -57,19 +41,44 @@ public:
 	 * Throws on error.
 	 *
 	 * @param src the input buffer
-	 * @return the destination buffer on success (will be
-	 * invalidated by deleting this object or the next FilterPCM()
-	 * or Reset() call)
+	 * @return the output buffer (will be invalidated by deleting
+	 * this object or any call to Reset(), FilterPCM(), ReadMore()
+	 * or Flush()); may be empty if no output is currently
+	 * available
 	 */
-	virtual ConstBuffer<void> FilterPCM(ConstBuffer<void> src) = 0;
+	virtual std::span<const std::byte> FilterPCM(std::span<const std::byte> src) = 0;
+
+	/**
+	 * Read more result data from the filter.  After each
+	 * FilterPCM() call, this should be called repeatedly until it
+	 * returns an empty span.
+	 *
+	 * Throws on error.
+	 *
+	 * @return the output buffer (will be invalidated by deleting
+	 * this object or any call to Reset(), FilterPCM(), ReadMore()
+	 * or Flush()); may be empty if no output is currently
+	 * available
+	 */
+	virtual std::span<const std::byte> ReadMore() {
+		return {};
+	}
 
 	/**
 	 * Flush pending data and return it.  This should be called
-	 * repeatedly until it returns nullptr.
+	 * repeatedly until it returns an empty span.
+	 *
+	 * After calling this method, this object cannot be used again
+         * (not even Reset() is allowed).
 	 *
 	 * Throws on error.
+	 *
+	 * @return pending data (will be invalidated by deleting this
+	 * object or by any call to Flush())
 	 */
-	virtual ConstBuffer<void> Flush();
+	virtual std::span<const std::byte> Flush() {
+		return {};
+	}
 };
 
 #endif

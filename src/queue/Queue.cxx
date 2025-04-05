@@ -1,24 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Queue.hxx"
 #include "song/DetachedSong.hxx"
+#include "song/LightSong.hxx"
 
 #include <algorithm>
 
@@ -38,16 +23,26 @@ Queue::~Queue() noexcept
 	delete[] order;
 }
 
+LightSong
+Queue::GetLight(unsigned position) const noexcept
+{
+	assert(position < length);
+
+	LightSong song{Get(position)};
+	song.priority = GetPriorityAtPosition(position);
+	return song;
+}
+
 int
 Queue::GetNextOrder(unsigned _order) const noexcept
 {
 	assert(_order < length);
 
-	if (single != SingleMode::OFF && repeat && !consume)
+	if (single != SingleMode::OFF && repeat && consume == ConsumeMode::OFF )
 		return _order;
 	else if (_order + 1 < length)
 		return _order + 1;
-	else if (repeat && (_order > 0 || !consume))
+	else if (repeat && (_order > 0 || consume == ConsumeMode::OFF))
 		/* restart at first song */
 		return 0;
 	else
@@ -152,7 +147,7 @@ Queue::MovePostion(unsigned from, unsigned to) noexcept
 void
 Queue::MoveRange(unsigned start, unsigned end, unsigned to) noexcept
 {
-	const auto tmp = std::make_unique<Item[]>(end - start);
+	const auto tmp = std::make_unique_for_overwrite<Item[]>(end - start);
 
 	// Copy the original block [start,end-1]
 	for (unsigned i = start; i < end; i++)
@@ -275,6 +270,7 @@ Queue::Clear() noexcept
 	}
 
 	length = 0;
+	last_loaded_playlist.clear();
 }
 
 static void

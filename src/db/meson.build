@@ -43,7 +43,6 @@ db_glue_sources = [
 if enable_inotify
   db_glue_sources += [
     'update/InotifyDomain.cxx',
-    'update/InotifySource.cxx',
     'update/InotifyQueue.cxx',
     'update/InotifyUpdate.cxx',
   ]
@@ -54,9 +53,9 @@ db_glue = static_library(
   db_glue_sources,
   include_directories: inc,
   dependencies: [
-    boost_dep,
     fmt_dep,
     log_dep,
+    fs_glue_dep,
   ],
 )
 

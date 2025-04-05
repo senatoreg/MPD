@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "pcm/Interleave.hxx"
 
@@ -35,8 +19,10 @@ TestInterleaveN()
 	static constexpr size_t n_frames = std::size(src1);
 	static constexpr unsigned channels = std::size(src_all);
 
-	static const ConstBuffer<const void *> src((const void *const*)src_all,
-						   channels);
+	static const std::span<const void *const> src{
+		(const void *const*)src_all,
+		channels,
+	};
 
 	static constexpr T poison = T(0xdeadbeef);
 	T dest[n_frames * channels + 1];
@@ -77,8 +63,10 @@ TEST(PcmTest, Interleave24)
 	static constexpr size_t n_frames = std::size(src1) / 3;
 	static constexpr unsigned channels = std::size(src_all);
 
-	static const ConstBuffer<const void *> src((const void *const*)src_all,
-						   channels);
+	static const std::span<const void *const> src{
+		(const void *const*)src_all,
+		channels,
+	};
 
 	static constexpr T poison = 0xff;
 	T dest[n_frames * channels * 3 + 1];

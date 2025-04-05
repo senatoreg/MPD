@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 
@@ -28,7 +12,7 @@
 #include "util/Domain.hxx"
 #include "util/ByteReverse.hxx"
 #include "util/StaticFifoBuffer.hxx"
-#include "util/NumberParser.hxx"
+#include "util/CNumberParser.hxx"
 #include "util/MimeType.hxx"
 #include "Log.hxx"
 
@@ -51,7 +35,7 @@ FillBuffer(DecoderClient &client, InputStream &is, B &buffer)
 	if (w.empty())
 		return true;
 
-	size_t nbytes = decoder_read(client, is, w.data, w.size);
+	size_t nbytes = decoder_read(client, is, w);
 	if (nbytes == 0 && is.LockIsEOF())
 		return false;
 
@@ -173,7 +157,7 @@ pcm_stream_decode(DecoderClient &client, InputStream &is)
 
 	client.Ready(audio_format, is.IsSeekable(), total_time);
 
-	StaticFifoBuffer<uint8_t, 4096> buffer;
+	StaticFifoBuffer<std::byte, 4096> buffer;
 
 	/* a buffer for pcm_unpack_24be() large enough to hold the
 	   results for a full source buffer */
@@ -187,26 +171,30 @@ pcm_stream_decode(DecoderClient &client, InputStream &is)
 		auto r = buffer.Read();
 		/* round down to the nearest frame size, because we
 		   must not pass partial frames to
-		   DecoderClient::SubmitData() */
-		r.size -= r.size % in_frame_size;
-		buffer.Consume(r.size);
+		   DecoderClient::SubmitAudio() */
+		r = r.first(r.size() - r.size() % in_frame_size);
+		buffer.Consume(r.size());
 
 		if (reverse_endian)
 			/* make sure we deliver samples in host byte order */
-			reverse_bytes_16((uint16_t *)r.data,
-					 (uint16_t *)r.data,
-					 (uint16_t *)(r.data + r.size));
+			reverse_bytes_16((uint16_t *)r.data(),
+					 (uint16_t *)r.data(),
+					 (uint16_t *)(r.data() + r.size()));
 		else if (l24) {
 			/* convert big-endian packed 24 bit
 			   (audio/L24) to native-endian 24 bit (in 32
 			   bit integers) */
-			pcm_unpack_24be(unpack_buffer, r.begin(), r.end());
-			r.data = (uint8_t *)&unpack_buffer[0];
-			r.size = (r.size / 3) * 4;
+			pcm_unpack_24be(unpack_buffer,
+					reinterpret_cast<const uint8_t *>(r.data()),
+					reinterpret_cast<const uint8_t *>(r.data() + r.size()));
+			r = {
+				(std::byte *)&unpack_buffer[0],
+				(r.size() / 3) * 4,
+			};
 		}
 
 		cmd = !r.empty()
-			? client.SubmitData(is, r.data, r.size, 0)
+			? client.SubmitAudio(is, r, 0)
 			: client.GetCommand();
 		if (cmd == DecoderCommand::SEEK) {
 			uint64_t frame = client.GetSeekFrame();

@@ -1,30 +1,15 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "VorbisEncoderPlugin.hxx"
 #include "OggEncoder.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "lib/xiph/VorbisComment.hxx"
+#include "tag/Names.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "config/Domain.hxx"
 #include "util/StringUtil.hxx"
-#include "util/NumberParser.hxx"
-#include "util/RuntimeError.hxx"
+#include "util/CNumberParser.hxx"
 
 #include <vorbis/vorbisenc.h>
 
@@ -55,7 +40,7 @@ public:
 	void PreTag() override;
 	void SendTag(const Tag &tag) override;
 
-	void Write(const void *data, size_t length) override;
+	void Write(std::span<const std::byte> src) override;
 
 private:
 	void HeaderOut(vorbis_comment &vc);
@@ -88,9 +73,9 @@ PreparedVorbisEncoder::PreparedVorbisEncoder(const ConfigBlock &block)
 		quality = ParseDouble(value, &endptr);
 
 		if (*endptr != '\0' || quality < -1.0f || quality > 10.0f)
-			throw FormatRuntimeError("quality \"%s\" is not a number in the "
-						 "range -1 to 10",
-						 value);
+			throw FmtRuntimeError("quality {:?} is not a number in the "
+					      "range -1 to 10",
+					      value);
 
 		if (block.GetBlockValue("bitrate") != nullptr)
 			throw std::runtime_error("quality and bitrate are both defined");
@@ -237,7 +222,7 @@ VorbisEncoder::SendTag(const Tag &tag)
 
 static void
 interleaved_to_vorbis_buffer(float **dest, const float *src,
-			     unsigned num_frames, unsigned num_channels)
+			     std::size_t num_frames, std::size_t num_channels)
 {
 	for (unsigned i = 0; i < num_frames; i++)
 		for (unsigned j = 0; j < num_channels; j++)
@@ -245,14 +230,14 @@ interleaved_to_vorbis_buffer(float **dest, const float *src,
 }
 
 void
-VorbisEncoder::Write(const void *data, size_t length)
+VorbisEncoder::Write(std::span<const std::byte> src)
 {
-	unsigned num_frames = length / audio_format.GetFrameSize();
+	std::size_t num_frames = src.size() / audio_format.GetFrameSize();
 
 	/* this is for only 16-bit audio */
 
 	interleaved_to_vorbis_buffer(vorbis_analysis_buffer(&vd, num_frames),
-				     (const float *)data,
+				     (const float *)(const void *)src.data(),
 				     num_frames,
 				     audio_format.channels);
 

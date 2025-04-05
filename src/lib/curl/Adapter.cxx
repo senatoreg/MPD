@@ -1,42 +1,17 @@
-/*
- * Copyright 2008-2021 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
 #include "Adapter.hxx"
 #include "Easy.hxx"
 #include "Handler.hxx"
 #include "util/CharUtil.hxx"
-#include "util/RuntimeError.hxx"
+#include "util/StringSplit.hxx"
 #include "util/StringStrip.hxx"
-#include "util/StringView.hxx"
 
 #include <algorithm>
 #include <cassert>
+
+using std::string_view_literals::operator""sv;
 
 void
 CurlResponseHandlerAdapter::Install(CurlEasy &easy)
@@ -96,8 +71,8 @@ CurlResponseHandlerAdapter::Done(CURLcode result) noexcept
 			StripRight(error_buffer);
 			const char *msg = error_buffer;
 			if (*msg == 0)
-				msg = curl_easy_strerror(result);
-			throw FormatRuntimeError("CURL failed: %s", msg);
+				msg = "CURL failed";
+			throw Curl::MakeError(result, msg);
 		}
 
 		FinishBody();
@@ -109,16 +84,16 @@ CurlResponseHandlerAdapter::Done(CURLcode result) noexcept
 
 [[gnu::pure]]
 static bool
-IsResponseBoundaryHeader(StringView s) noexcept
+IsResponseBoundaryHeader(std::string_view s) noexcept
 {
-	return s.size > 5 && (s.StartsWith("HTTP/") ||
-			      /* the proprietary "ICY 200 OK" is
-				 emitted by Shoutcast */
-			      s.StartsWith("ICY 2"));
+	return s.starts_with("HTTP/"sv) ||
+		/* the proprietary "ICY 200 OK" is emitted by
+		   Shoutcast */
+		s.starts_with("ICY 2"sv);
 }
 
 inline void
-CurlResponseHandlerAdapter::HeaderFunction(StringView s) noexcept
+CurlResponseHandlerAdapter::HeaderFunction(std::string_view s) noexcept
 {
 	if (state > State::HEADERS)
 		return;
@@ -130,27 +105,15 @@ CurlResponseHandlerAdapter::HeaderFunction(StringView s) noexcept
 		return;
 	}
 
-	const char *header = s.data;
-	const char *end = StripRight(header, header + s.size);
-
-	const char *value = s.Find(':');
-	if (value == nullptr)
+	auto [_name, value] = Split(StripRight(s), ':');
+	if (_name.empty() || value.data() == nullptr)
 		return;
 
-	std::string name(header, value);
+	std::string name{_name};
 	std::transform(name.begin(), name.end(), name.begin(),
 		       static_cast<char(*)(char)>(ToLowerASCII));
 
-	/* skip the colon */
-
-	++value;
-
-	/* strip the value */
-
-	value = StripLeft(value, end);
-	end = StripRight(value, end);
-
-	headers.emplace(std::move(name), std::string(value, end));
+	headers.emplace(std::move(name), StripLeft(value));
 }
 
 std::size_t
@@ -174,7 +137,7 @@ CurlResponseHandlerAdapter::DataReceived(const void *ptr,
 
 	try {
 		FinishHeaders();
-		handler.OnData({ptr, received_size});
+		handler.OnData({(const std::byte *)ptr, received_size});
 		return received_size;
 	} catch (CurlResponseHandler::Pause) {
 		return CURL_WRITEFUNC_PAUSE;

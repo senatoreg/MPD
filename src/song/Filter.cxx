@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "Filter.hxx"
@@ -24,16 +8,17 @@
 #include "BaseSongFilter.hxx"
 #include "TagSongFilter.hxx"
 #include "ModifiedSinceSongFilter.hxx"
+#include "AddedSinceSongFilter.hxx"
 #include "AudioFormatSongFilter.hxx"
+#include "PrioritySongFilter.hxx"
 #include "pcm/AudioParser.hxx"
 #include "tag/ParseName.hxx"
+#include "tag/Type.hxx"
 #include "time/ISO8601.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "util/CharUtil.hxx"
-#include "util/ConstBuffer.hxx"
-#include "util/RuntimeError.hxx"
 #include "util/StringCompare.hxx"
 #include "util/StringStrip.hxx"
-#include "util/StringView.hxx"
 #include "util/ASCII.hxx"
 #include "util/UriUtil.hxx"
 
@@ -53,14 +38,16 @@ enum {
 
 	LOCATE_TAG_MODIFIED_SINCE,
 	LOCATE_TAG_AUDIO_FORMAT,
+	LOCATE_TAG_PRIORITY,
 	LOCATE_TAG_FILE_TYPE,
 	LOCATE_TAG_ANY_TYPE,
+	LOCATE_TAG_ADDED_SINCE,
 };
 
 /**
  * @return #TAG_NUM_OF_ITEM_TYPES on error
  */
-gcc_pure
+[[gnu::pure]]
 static unsigned
 locate_parse_type(const char *str) noexcept
 {
@@ -77,8 +64,14 @@ locate_parse_type(const char *str) noexcept
 	if (strcmp(str, "modified-since") == 0)
 		return LOCATE_TAG_MODIFIED_SINCE;
 
+	if (strcmp(str, "added-since") == 0)
+		return LOCATE_TAG_ADDED_SINCE;
+
 	if (StringEqualsCaseASCII(str, "AudioFormat"))
 		return LOCATE_TAG_AUDIO_FORMAT;
+
+	if (StringEqualsCaseASCII(str, "prio"))
+		return LOCATE_TAG_PRIORITY;
 
 	return tag_name_parse_i(str);
 }
@@ -87,8 +80,12 @@ SongFilter::SongFilter(TagType tag, const char *value, bool fold_case)
 {
 	/* for compatibility with MPD 0.20 and older, "fold_case" also
 	   switches on "substring" */
+	const auto position = fold_case
+		? StringFilter::Position::ANYWHERE
+		: StringFilter::Position::FULL;
+
 	and_filter.AddItem(std::make_unique<TagSongFilter>(tag,
-							   StringFilter(value, fold_case, fold_case, false)));
+							   StringFilter(value, fold_case, position, false)));
 }
 
 /* this destructor exists here just so it won't get inlined */
@@ -153,8 +150,7 @@ ExpectFilterType(const char *&s)
 
 	const auto type = locate_parse_type(name.c_str());
 	if (type == TAG_NUM_OF_ITEM_TYPES)
-		throw FormatRuntimeError("Unknown filter type: %s",
-					 name.c_str());
+		throw FmtRuntimeError("Unknown filter type: {}", name);
 
 	return type;
 }
@@ -195,6 +191,39 @@ ExpectQuoted(const char *&s)
 }
 
 /**
+ * Operator definition used to parse the operator
+ * from the command and create the StringFilter
+ * if it matched the operator prefix.
+ */
+struct OperatorDef {
+	const char *prefix;
+	bool fold_case;
+	bool negated;
+	StringFilter::Position position;
+};
+
+/**
+ * Pre-defined operators with explicit case-sensitivity.
+ */
+static constexpr std::array<OperatorDef, 12> operators = {
+	//            operator prefix     fold case  negated     position
+	OperatorDef { "contains_cs ",     false,     false,      StringFilter::Position::ANYWHERE },
+	OperatorDef { "!contains_cs ",    false,     true,       StringFilter::Position::ANYWHERE },
+	OperatorDef { "contains_ci ",     true,      false,      StringFilter::Position::ANYWHERE },
+	OperatorDef { "!contains_ci ",    true,      true,       StringFilter::Position::ANYWHERE },
+
+	OperatorDef { "starts_with_cs ",  false,     false,      StringFilter::Position::PREFIX },
+	OperatorDef { "!starts_with_cs ", false,     true,       StringFilter::Position::PREFIX },
+	OperatorDef { "starts_with_ci ",  true,      false,      StringFilter::Position::PREFIX },
+	OperatorDef { "!starts_with_ci ", true,      true,       StringFilter::Position::PREFIX },
+
+	OperatorDef { "eq_cs ",           false,     false,      StringFilter::Position::FULL },
+	OperatorDef { "!eq_cs ",          false,     true,       StringFilter::Position::FULL },
+	OperatorDef { "eq_ci ",           true,      false,      StringFilter::Position::FULL },
+	OperatorDef { "!eq_ci ",          true,      true,       StringFilter::Position::FULL },
+};
+
+/**
  * Parse a string operator and its second operand and convert it to a
  * #StringFilter.
  *
@@ -203,16 +232,55 @@ ExpectQuoted(const char *&s)
 static StringFilter
 ParseStringFilter(const char *&s, bool fold_case)
 {
+	for (auto& op: operators) {
+		if (auto after_prefix = StringAfterPrefixIgnoreCase(s, op.prefix)) {
+			s = StripLeft(after_prefix);
+			return StringFilter(
+				ExpectQuoted(s),
+				op.fold_case,
+				op.position,
+				op.negated);
+		}
+	}
+
 	if (auto after_contains = StringAfterPrefixIgnoreCase(s, "contains ")) {
 		s = StripLeft(after_contains);
 		auto value = ExpectQuoted(s);
-		return {std::move(value), fold_case, true, false};
+		return {
+			std::move(value), fold_case,
+			StringFilter::Position::ANYWHERE,
+			false,
+		};
 	}
 
 	if (auto after_not_contains = StringAfterPrefixIgnoreCase(s, "!contains ")) {
 		s = StripLeft(after_not_contains);
 		auto value = ExpectQuoted(s);
-		return {std::move(value), fold_case, true, true};
+		return {
+			std::move(value), fold_case,
+			StringFilter::Position::ANYWHERE,
+			true,
+		};
+	}
+
+	if (auto after_starts_with = StringAfterPrefixIgnoreCase(s, "starts_with ")) {
+		s = StripLeft(after_starts_with);
+		auto value = ExpectQuoted(s);
+		return {
+			std::move(value), fold_case,
+			StringFilter::Position::PREFIX,
+			false,
+		};
+	}
+
+	if (auto after_not_starts_with = StringAfterPrefixIgnoreCase(s, "!starts_with ")) {
+		s = StripLeft(after_not_starts_with);
+		auto value = ExpectQuoted(s);
+		return {
+			std::move(value), fold_case,
+			StringFilter::Position::PREFIX,
+			true,
+		};
 	}
 
 	bool negated = false;
@@ -222,10 +290,13 @@ ParseStringFilter(const char *&s, bool fold_case)
 		negated = s[0] == '!';
 		s = StripLeft(s + 2);
 		auto value = ExpectQuoted(s);
-		StringFilter f(std::move(value), fold_case, false, negated);
+		StringFilter f{
+			std::move(value), fold_case,
+			StringFilter::Position::FULL,
+			negated,
+		};
 		f.SetRegex(std::make_shared<UniqueRegex>(f.GetValue().c_str(),
-							 false, false,
-							 fold_case));
+							 Pcre::CompileOptions{.caseless=fold_case}));
 		return f;
 	}
 #endif
@@ -233,12 +304,16 @@ ParseStringFilter(const char *&s, bool fold_case)
 	if (s[0] == '!' && s[1] == '=')
 		negated = true;
 	else if (s[0] != '=' || s[1] != '=')
-		throw std::runtime_error("'==' or '!=' expected");
+		throw FmtRuntimeError("Unknown filter operator: {}", s);
 
 	s = StripLeft(s + 2);
 	auto value = ExpectQuoted(s);
 
-	return {std::move(value), fold_case, false, negated};
+	return {
+		std::move(value), fold_case,
+		StringFilter::Position::FULL,
+		negated,
+	};
 }
 
 ISongFilterPtr
@@ -251,7 +326,7 @@ SongFilter::ParseExpression(const char *&s, bool fold_case)
 	if (*s == '(') {
 		auto first = ParseExpression(s, fold_case);
 		if (*s == ')') {
-			++s;
+			s = StripLeft(s + 1);
 			return first;
 		}
 
@@ -265,7 +340,7 @@ SongFilter::ParseExpression(const char *&s, bool fold_case)
 			and_filter->AddItem(ParseExpression(s, fold_case));
 
 			if (*s == ')') {
-				++s;
+				s = StripLeft(s + 1);
 				return and_filter;
 			}
 
@@ -296,6 +371,12 @@ SongFilter::ParseExpression(const char *&s, bool fold_case)
 			throw std::runtime_error("')' expected");
 		s = StripLeft(s + 1);
 		return std::make_unique<ModifiedSinceSongFilter>(ParseTimeStamp(value_s.c_str()));
+	} else if (type == LOCATE_TAG_ADDED_SINCE) {
+		const auto value_s = ExpectQuoted(s);
+		if (*s != ')')
+			throw std::runtime_error("')' expected");
+		s = StripLeft(s + 1);
+		return std::make_unique<AddedSinceSongFilter>(ParseTimeStamp(value_s.c_str()));
 	} else if (type == LOCATE_TAG_BASE_TYPE) {
 		auto value = ExpectQuoted(s);
 		if (*s != ')')
@@ -314,14 +395,34 @@ SongFilter::ParseExpression(const char *&s, bool fold_case)
 
 		s = StripLeft(s + 2);
 
-		const auto value = ParseAudioFormat(ExpectQuoted(s).c_str(),
-						    mask);
+		const auto value = ParseAudioFormat(ExpectQuoted(s), mask);
 
 		if (*s != ')')
 			throw std::runtime_error("')' expected");
 		s = StripLeft(s + 1);
 
 		return std::make_unique<AudioFormatSongFilter>(value);
+	} else if (type == LOCATE_TAG_PRIORITY) {
+		if (s[0] == '>' && s[1] == '=') {
+			// TODO support more operators
+		} else
+			throw std::runtime_error("'>=' expected");
+
+		s = StripLeft(s + 2);
+
+		char *endptr;
+		const auto value = strtoul(s, &endptr, 10);
+		if (endptr == s)
+			throw std::runtime_error("Number expected");
+
+		if (value > 0xff)
+			throw std::runtime_error("Invalid priority value");
+
+		if (*endptr != ')')
+			throw std::runtime_error("')' expected");
+		s = StripLeft(endptr + 1);
+
+		return std::make_unique<PrioritySongFilter>(value);
 	} else {
 		auto string_filter = ParseStringFilter(s, fold_case);
 		if (*s != ')')
@@ -359,14 +460,22 @@ SongFilter::Parse(const char *tag_string, const char *value, bool fold_case)
 	case LOCATE_TAG_MODIFIED_SINCE:
 		and_filter.AddItem(std::make_unique<ModifiedSinceSongFilter>(ParseTimeStamp(value)));
 		break;
+	
+	case LOCATE_TAG_ADDED_SINCE:
+		and_filter.AddItem(std::make_unique<AddedSinceSongFilter>(ParseTimeStamp(value)));
+		break;
 
 	case LOCATE_TAG_FILE_TYPE:
 		/* for compatibility with MPD 0.20 and older,
 		   "fold_case" also switches on "substring" */
-		and_filter.AddItem(std::make_unique<UriSongFilter>(StringFilter(value,
-										fold_case,
-										fold_case,
-										false)));
+		and_filter.AddItem(std::make_unique<UriSongFilter>(StringFilter{
+					value,
+					fold_case,
+					fold_case
+					? StringFilter::Position::ANYWHERE
+					: StringFilter::Position::FULL,
+					false,
+				}));
 		break;
 
 	default:
@@ -375,24 +484,28 @@ SongFilter::Parse(const char *tag_string, const char *value, bool fold_case)
 
 		/* for compatibility with MPD 0.20 and older,
 		   "fold_case" also switches on "substring" */
-		and_filter.AddItem(std::make_unique<TagSongFilter>(TagType(tag),
-								   StringFilter(value,
-										fold_case,
-										fold_case,
-										false)));
+		and_filter.AddItem(std::make_unique<TagSongFilter>(TagType(tag), StringFilter{
+					value,
+					fold_case,
+					fold_case
+					? StringFilter::Position::ANYWHERE
+					: StringFilter::Position::FULL,
+					false,
+				}));
 		break;
 	}
 }
 
 void
-SongFilter::Parse(ConstBuffer<const char *> args, bool fold_case)
+SongFilter::Parse(std::span<const char *const> args, bool fold_case)
 {
 	if (args.empty())
 		throw std::runtime_error("Incorrect number of filter arguments");
 
 	do {
 		if (*args.front() == '(') {
-			const char *s = args.shift();
+			const char *s = args.front();
+			args = args.subspan(1);
 			const char *end = s;
 			auto f = ParseExpression(end, fold_case);
 			if (*end != 0)
@@ -402,11 +515,12 @@ SongFilter::Parse(ConstBuffer<const char *> args, bool fold_case)
 			continue;
 		}
 
-		if (args.size < 2)
+		if (args.size() < 2)
 			throw std::runtime_error("Incorrect number of filter arguments");
 
-		const char *tag = args.shift();
-		const char *value = args.shift();
+		const char *tag = args[0];
+		const char *value = args[1];
+		args = args.subspan(2);
 		Parse(tag, value, fold_case);
 	} while (!args.empty());
 }

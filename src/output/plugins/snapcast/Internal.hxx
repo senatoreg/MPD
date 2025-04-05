@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_OUTPUT_SNAPCAST_INTERNAL_HXX
 #define MPD_OUTPUT_SNAPCAST_INTERNAL_HXX
@@ -134,7 +118,7 @@ public:
 	 */
 	[[gnu::pure]]
 	bool LockHasClients() const noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		return HasClients();
 	}
 
@@ -161,9 +145,8 @@ public:
 		return "pcm";
 	}
 
-	ConstBuffer<void> GetCodecHeader() const noexcept {
-		ConstBuffer<std::byte> result(codec_header);
-		return result.ToVoid();
+	std::span<const std::byte> GetCodecHeader() const noexcept {
+		return codec_header;
 	}
 
 	/* virtual methods from class AudioOutput */
@@ -184,7 +167,7 @@ public:
 
 	void SendTag(const Tag &tag) override;
 
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 
 	void Drain() override;
 	void Cancel() noexcept override;
@@ -201,7 +184,7 @@ private:
 
 	/* virtual methods from class ServerSocket */
 	void OnAccept(UniqueSocketDescriptor fd,
-		      SocketAddress address, int uid) noexcept override;
+		      SocketAddress address) noexcept override;
 };
 
 #endif

@@ -1,27 +1,10 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Interleave.hxx"
 #include "Buffer.hxx"
 #include "Error.hxx"
 #include "pcm/Interleave.hxx"
-#include "util/ConstBuffer.hxx"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -32,7 +15,7 @@ extern "C" {
 
 namespace Ffmpeg {
 
-ConstBuffer<void>
+std::span<const std::byte>
 InterleaveFrame(const AVFrame &frame, FfmpegBuffer &buffer)
 {
 	assert(frame.nb_samples > 0);
@@ -53,20 +36,19 @@ InterleaveFrame(const AVFrame &frame, FfmpegBuffer &buffer)
 	if (data_size < 0)
 		throw MakeFfmpegError(data_size);
 
-	void *output_buffer;
+	std::byte *output_buffer;
 	if (av_sample_fmt_is_planar(format) && channels > 1) {
-		output_buffer = buffer.GetT<uint8_t>(data_size);
+		output_buffer = buffer.GetT<std::byte>(data_size);
 		if (output_buffer == nullptr)
 			/* Not enough memory - shouldn't happen */
 			throw std::bad_alloc();
 
 		PcmInterleave(output_buffer,
-			      ConstBuffer<const void *>((const void *const*)frame.extended_data,
-							channels),
+			      {(const void *const*)frame.extended_data, channels},
 			      n_frames,
 			      av_get_bytes_per_sample(format));
 	} else {
-		output_buffer = frame.extended_data[0];
+		output_buffer = (std::byte *)frame.extended_data[0];
 	}
 
 	return { output_buffer, (size_t)data_size };

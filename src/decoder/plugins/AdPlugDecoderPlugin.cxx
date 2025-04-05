@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "AdPlugDecoderPlugin.h"
 #include "tag/Handler.hxx"
@@ -23,7 +7,6 @@
 #include "pcm/CheckAudioFormat.hxx"
 #include "fs/Path.hxx"
 #include "util/Domain.hxx"
-#include "util/StringView.hxx"
 #include "Log.hxx"
 
 #include <adplug/adplug.h>
@@ -72,20 +55,20 @@ adplug_file_decode(DecoderClient &client, Path path_fs)
 		int16_t buffer[2048];
 		constexpr unsigned frames_per_buffer = std::size(buffer) / 2;
 		opl.update(buffer, frames_per_buffer);
-		cmd = client.SubmitData(nullptr,
-					buffer, sizeof(buffer),
-					0);
+		cmd = client.SubmitAudio(nullptr,
+					 std::span{buffer},
+					 0);
 	} while (cmd == DecoderCommand::NONE);
 
 	delete player;
 }
 
 static void
-adplug_scan_tag(TagType type, const std::string &value,
+adplug_scan_tag(TagType type, const std::string_view value,
 		TagHandler &handler) noexcept
 {
 	if (!value.empty())
-		handler.OnTag(type, {value.data(), value.size()});
+		handler.OnTag(type, value);
 }
 
 static bool

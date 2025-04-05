@@ -1,29 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "OssOutputPlugin.hxx"
 #include "../OutputAPI.hxx"
-#include "mixer/MixerList.hxx"
+#include "mixer/plugins/OssMixerPlugin.hxx"
 #include "pcm/Export.hxx"
 #include "io/UniqueFileDescriptor.hxx"
-#include "system/Error.hxx"
-#include "util/ConstBuffer.hxx"
+#include "lib/fmt/SystemError.hxx"
 #include "util/Domain.hxx"
 #include "util/ByteOrder.hxx"
 #include "util/Manual.hxx"
@@ -40,11 +23,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#if defined(__OpenBSD__) || defined(__NetBSD__)
-# include <soundcard.h>
-#else /* !(defined(__OpenBSD__) || defined(__NetBSD__) */
-# include <sys/soundcard.h>
-#endif /* !(defined(__OpenBSD__) || defined(__NetBSD__) */
+#include <sys/soundcard.h>
 
 /* We got bug reports from FreeBSD users who said that the two 24 bit
    formats generate white noise on FreeBSD, but 32 bit works.  This is
@@ -115,7 +94,7 @@ public:
 		DoClose();
 	}
 
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 	void Cancel() noexcept override;
 
 private:
@@ -187,7 +166,7 @@ oss_output_test_default_device() noexcept
 			return true;
 
 		FmtError(oss_output_domain,
-			 "Error opening OSS device \"{}\": {}",
+			 "Error opening OSS device {:?}: {}",
 			 default_devices[i], strerror(errno));
 	}
 
@@ -393,8 +372,7 @@ oss_setup_sample_rate(FileDescriptor fd, AudioFormat &audio_format,
  * Convert a MPD sample format to its OSS counterpart.  Returns
  * AFMT_QUERY if there is no direct counterpart.
  */
-gcc_const
-static int
+static constexpr int
 sample_format_to_oss(SampleFormat format) noexcept
 {
 	switch (format) {
@@ -432,8 +410,7 @@ sample_format_to_oss(SampleFormat format) noexcept
  * Convert an OSS sample format to its MPD counterpart.  Returns
  * SampleFormat::UNDEFINED if there is no direct counterpart.
  */
-gcc_const
-static SampleFormat
+static constexpr SampleFormat
 sample_format_from_oss(int format) noexcept
 {
 	switch (format) {
@@ -644,7 +621,7 @@ try {
 	assert(!fd.IsDefined());
 
 	if (!fd.Open(device, O_WRONLY))
-		throw FormatErrno("Error opening OSS device \"%s\"", device);
+		throw FmtErrno("Error opening OSS device {:?}", device);
 
 	OssIoctlExact(fd, SNDCTL_DSP_CHANNELS, effective_channels,
 		      "Failed to set channel count");
@@ -661,7 +638,7 @@ void
 OssOutput::Open(AudioFormat &_audio_format)
 try {
 	if (!fd.Open(device, O_WRONLY))
-		throw FormatErrno("Error opening OSS device \"%s\"", device);
+		throw FmtErrno("Error opening OSS device {:?}", device);
 
 	SetupOrDop(_audio_format);
 } catch (...) {
@@ -680,31 +657,26 @@ OssOutput::Cancel() noexcept
 	pcm_export->Reset();
 }
 
-size_t
-OssOutput::Play(const void *chunk, size_t size)
+std::size_t
+OssOutput::Play(std::span<const std::byte> src)
 {
-	ssize_t ret;
-
-	assert(size > 0);
+	assert(!src.empty());
 
 	/* reopen the device since it was closed by dropBufferedAudio */
 	if (!fd.IsDefined())
 		Reopen();
 
-	const auto e = pcm_export->Export({chunk, size});
+	const auto e = pcm_export->Export(src);
 	if (e.empty())
-		return size;
-
-	chunk = e.data;
-	size = e.size;
+		return src.size();
 
 	while (true) {
-		ret = fd.Write(chunk, size);
+		const ssize_t ret = fd.Write(e);
 		if (ret > 0)
 			return pcm_export->CalcInputSize(ret);
 
 		if (ret < 0 && errno != EINTR)
-			throw FormatErrno("Write error on %s", device);
+			throw FmtErrno("Write error on {:?}", device);
 	}
 }
 

@@ -1,27 +1,10 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "FlacPcm.hxx"
 #include "pcm/CheckAudioFormat.hxx"
 #include "lib/xiph/FlacAudioFormat.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/ConstBuffer.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 
 #include <cassert>
 
@@ -31,8 +14,8 @@ FlacPcmImport::Open(unsigned sample_rate, unsigned bits_per_sample,
 {
 	auto sample_format = FlacSampleFormat(bits_per_sample);
 	if (sample_format == SampleFormat::UNDEFINED)
-		throw FormatRuntimeError("Unsupported FLAC bit depth: %u",
-					 bits_per_sample);
+		throw FmtRuntimeError("Unsupported FLAC bit depth: {}",
+				      bits_per_sample);
 
 	audio_format = CheckAudioFormat(sample_rate, sample_format, channels);
 }
@@ -70,7 +53,7 @@ FlacImport(T *dest, const FLAC__int32 *const src[], size_t n_frames,
 }
 
 template<typename T>
-static ConstBuffer<void>
+static std::span<const std::byte>
 FlacImport(PcmBuffer &buffer, const FLAC__int32 *const src[], size_t n_frames,
 	   unsigned n_channels) noexcept
 {
@@ -78,11 +61,11 @@ FlacImport(PcmBuffer &buffer, const FLAC__int32 *const src[], size_t n_frames,
 	size_t dest_size = n_samples * sizeof(T);
 	T *dest = (T *)buffer.Get(dest_size);
 	FlacImport(dest, src, n_frames, n_channels);
-	return {dest, dest_size};
+	return std::as_bytes(std::span{dest, n_samples});
 }
 
-ConstBuffer<void>
-FlacPcmImport::Import(const FLAC__int32 *const src[], size_t n_frames)
+std::span<const std::byte>
+FlacPcmImport::Import(const FLAC__int32 *const src[], size_t n_frames) noexcept
 {
 	switch (audio_format.format) {
 	case SampleFormat::S16:

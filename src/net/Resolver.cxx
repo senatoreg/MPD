@@ -1,40 +1,15 @@
-/*
- * Copyright 2007-2018 Content Management AG
- * All rights reserved.
- *
- * author: Max Kellermann <mk@cm4all.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright CM4all GmbH
+// author: Max Kellermann <mk@cm4all.com>
 
 #include "Resolver.hxx"
 #include "AddressInfo.hxx"
 #include "HostParser.hxx"
-#include "util/RuntimeError.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "util/CharUtil.hxx"
+#include "util/StringAPI.hxx"
+
+#include <algorithm> // for std:copy()
 
 #ifdef _WIN32
 #include <ws2tcpip.h>
@@ -44,8 +19,6 @@
 #include <net/if.h>
 #endif
 
-#include <cstring>
-
 #include <stdio.h>
 
 AddressInfoList
@@ -54,11 +27,17 @@ Resolve(const char *node, const char *service,
 {
 	struct addrinfo *ai;
 	int error = getaddrinfo(node, service, hints, &ai);
-	if (error != 0)
-		throw FormatRuntimeError("Failed to resolve '%s':'%s': %s",
-					 node == nullptr ? "" : node,
-					 service == nullptr ? "" : service,
-					 gai_strerror(error));
+	if (error != 0) {
+#ifdef _WIN32
+		const char *msg = gai_strerrorA(error);
+#else
+		const char *msg = gai_strerror(error);
+#endif
+		throw FmtRuntimeError("Failed to resolve {:?}:{:?}: {}",
+				      node == nullptr ? "" : node,
+				      service == nullptr ? "" : service,
+				      msg);
+	}
 
 	return AddressInfoList(ai);
 }
@@ -89,7 +68,7 @@ FindAndResolveInterfaceName(char *host, size_t size)
 
 	const unsigned i = if_nametoindex(interface);
 	if (i == 0)
-		throw FormatRuntimeError("No such interface: %s", interface);
+		throw FmtRuntimeError("No such interface: {}", interface);
 
 	sprintf(interface, "%u", i);
 }
@@ -108,11 +87,10 @@ Resolve(const char *host_and_port, int default_port,
 		if (eh.HasFailed())
 			throw std::runtime_error("Failed to extract host name");
 
-		if (eh.host.size >= sizeof(buffer))
+		if (eh.host.size() >= sizeof(buffer))
 			throw std::runtime_error("Host name too long");
 
-		memcpy(buffer, eh.host.data, eh.host.size);
-		buffer[eh.host.size] = 0;
+		*std::copy(eh.host.begin(), eh.host.end(), buffer) = 0;
 		host = buffer;
 
 #ifndef _WIN32
@@ -130,7 +108,7 @@ Resolve(const char *host_and_port, int default_port,
 		} else
 			throw std::runtime_error("Garbage after host name");
 
-		if (ai_is_passive(hints) && strcmp(host, "*") == 0)
+		if (ai_is_passive(hints) && StringIsEqual(host, "*"))
 			host = nullptr;
 	} else {
 		host = nullptr;

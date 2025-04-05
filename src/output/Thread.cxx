@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Control.hxx"
 #include "Error.hxx"
@@ -24,12 +8,12 @@
 #include "Domain.hxx"
 #include "lib/fmt/AudioFormatFormatter.hxx"
 #include "lib/fmt/ExceptionFormatter.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "thread/Util.hxx"
 #include "thread/Slack.hxx"
 #include "thread/Name.hxx"
 #include "util/StringBuffer.hxx"
 #include "util/ScopeExit.hxx"
-#include "util/RuntimeError.hxx"
 #include "Log.hxx"
 
 #include <cassert>
@@ -144,14 +128,17 @@ AudioOutputControl::InternalOpen(const AudioFormat in_audio_format,
 					output->prepared_replay_gain_filter.get(),
 					output->prepared_other_replay_gain_filter.get(),
 					*output->prepared_filter);
+
+			source_state = SourceState::OPEN;
 		} catch (...) {
-			std::throw_with_nested(FormatRuntimeError("Failed to open filter for %s",
-								  GetLogName()));
+			std::throw_with_nested(FmtRuntimeError("Failed to open filter for {}",
+							       GetLogName()));
 		}
 
 		try {
 			InternalOpen2(f);
 		} catch (...) {
+			source_state = SourceState::CLOSED;
 			source.Close();
 			throw;
 		}
@@ -189,6 +176,7 @@ AudioOutputControl::InternalClose(bool drain) noexcept
 		output->Close(drain);
 	}
 
+	source_state = SourceState::CLOSED;
 	source.Close();
 }
 
@@ -213,16 +201,21 @@ AudioOutputControl::WaitForDelay(std::unique_lock<Mutex> &lock) noexcept
 		if (delay <= std::chrono::steady_clock::duration::zero())
 			return true;
 
-		(void)wake_cond.wait_for(lock, delay);
+		if (delay >= std::chrono::steady_clock::duration::max())
+			wake_cond.wait(lock);
+		else
+			(void)wake_cond.wait_for(lock, delay);
 
 		if (command != Command::NONE)
 			return false;
 	}
 }
 
-bool
+inline bool
 AudioOutputControl::FillSourceOrClose() noexcept
 try {
+	assert(source_state == SourceState::OPEN);
+
 	return source.Fill(mutex);
 } catch (...) {
 	FmtError(output_domain,
@@ -235,6 +228,8 @@ try {
 inline bool
 AudioOutputControl::PlayChunk(std::unique_lock<Mutex> &lock) noexcept
 {
+	assert(source_state == SourceState::OPEN);
+
 	// ensure pending tags are flushed in all cases
 	const auto *tag = source.ReadTag();
 	if (tags && tag != nullptr) {
@@ -265,9 +260,9 @@ AudioOutputControl::PlayChunk(std::unique_lock<Mutex> &lock) noexcept
 
 		try {
 			const ScopeUnlock unlock(mutex);
-			nbytes = output->Play(data.data, data.size);
+			nbytes = output->Play(data);
 			assert(nbytes > 0);
-			assert(nbytes <= data.size);
+			assert(nbytes <= data.size());
 		} catch (AudioOutputInterrupted) {
 			caught_interrupted = true;
 			return false;
@@ -293,6 +288,8 @@ AudioOutputControl::PlayChunk(std::unique_lock<Mutex> &lock) noexcept
 inline bool
 AudioOutputControl::InternalPlay(std::unique_lock<Mutex> &lock) noexcept
 {
+	assert(source_state == SourceState::OPEN);
+
 	if (!FillSourceOrClose())
 		/* no chunk available */
 		return false;
@@ -377,15 +374,13 @@ AudioOutputControl::InternalPause(std::unique_lock<Mutex> &lock) noexcept
 }
 
 static void
-PlayFull(FilteredAudioOutput &output, ConstBuffer<void> _buffer)
+PlayFull(FilteredAudioOutput &output, std::span<const std::byte> buffer)
 {
-	auto buffer = ConstBuffer<uint8_t>::FromVoid(_buffer);
-
 	while (!buffer.empty()) {
-		size_t nbytes = output.Play(buffer.data, buffer.size);
+		size_t nbytes = output.Play(buffer);
 		assert(nbytes > 0);
 
-		buffer.skip_front(nbytes);
+		buffer = buffer.subspan(nbytes);
 	}
 
 }
@@ -393,6 +388,10 @@ PlayFull(FilteredAudioOutput &output, ConstBuffer<void> _buffer)
 inline void
 AudioOutputControl::InternalDrain() noexcept
 {
+	assert(source_state == SourceState::OPEN);
+
+	source_state = SourceState::FLUSHED;
+
 	/* after this method finishes, there's nothing left to be
 	   drained */
 	playing = false;
@@ -404,7 +403,7 @@ AudioOutputControl::InternalDrain() noexcept
 
 		while (true) {
 			auto buffer = source.Flush();
-			if (buffer.IsNull())
+			if (buffer.empty())
 				break;
 
 			PlayFull(*output, buffer);
@@ -423,7 +422,7 @@ AudioOutputControl::InternalDrain() noexcept
 void
 AudioOutputControl::Task() noexcept
 {
-	FormatThreadName("output:%s", GetName());
+	FmtThreadName("output:{}", GetName());
 
 	try {
 		SetThreadRealtime();
@@ -435,7 +434,7 @@ AudioOutputControl::Task() noexcept
 
 	SetThreadTimerSlack(std::chrono::microseconds(100));
 
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 
 	while (true) {
 		switch (command) {
@@ -443,7 +442,8 @@ AudioOutputControl::Task() noexcept
 			/* no pending command: play (or wait for a
 			   command) */
 
-			if (open && allow_play && !caught_interrupted &&
+			if (open && source_state == SourceState::OPEN &&
+			    allow_play && !caught_interrupted &&
 			    InternalPlay(lock))
 				/* don't wait for an event if there
 				   are more chunks in the pipe */
@@ -505,7 +505,8 @@ AudioOutputControl::Task() noexcept
 				   AudioOutputSource because its data
 				   have been invalidated by stopping
 				   the actual playback */
-				source.Cancel();
+				if (source_state == SourceState::OPEN)
+					source.Cancel();
 				InternalPause(lock);
 			} else {
 				InternalClose(false);
@@ -524,7 +525,8 @@ AudioOutputControl::Task() noexcept
 		case Command::CANCEL:
 			caught_interrupted = false;
 
-			source.Cancel();
+			if (source_state == SourceState::OPEN)
+				source.Cancel();
 
 			if (open) {
 				playing = false;
@@ -537,7 +539,8 @@ AudioOutputControl::Task() noexcept
 
 		case Command::KILL:
 			InternalDisable();
-			source.Cancel();
+			if (source_state == SourceState::OPEN)
+				source.Cancel();
 			CommandFinished();
 			return;
 		}

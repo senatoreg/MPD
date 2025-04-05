@@ -24,7 +24,7 @@ The default plugin. Stores a copy of the database in memory. A file is used for 
    * - **compress yes|no**
      - Compress the database file using gzip? Enabled by default (if built with zlib).
    * - **hide_playlist_targets yes|no**
-     - Hide songs which are referenced by playlists?  Thas is,
+     - Hide songs which are referenced by playlists?  That is,
        playlist files which are represented in the database as virtual
        directories (playlist plugin setting ``as_directory``).  This
        option is enabled by default and avoids duplicate songs; one
@@ -102,7 +102,12 @@ nfs
 
 Load music files from a NFS server.  It is used when
 :code:`music_directory` contains a ``nfs://`` URI according to
-RFC2224, for example :samp:`nfs://servername/path`.
+RFC2224, for example :samp:`nfs://servername/path`.  MPD supports the
+libnfs URL arguments as documented in the `libnfs README
+<https://github.com/sahlberg/libnfs/blob/master/README>`__.  For
+example, you can use NFSv4 with the ``version`` argument::
+
+ music_directory "nfs://server/music?version=4"
 
 See :ref:`input_nfs` for more information.
 
@@ -224,21 +229,57 @@ variables such as ``http_proxy`` will be in effect.
 User name and password are read from an optional :file:`~/.netrc`, :file:`~/.curlrc` is not read.
 
 .. list-table::
-   :widths: 20 80
+   :widths: 20 70 10
    :header-rows: 1
 
    * - Setting
      - Description
+     - Default
    * - **proxy**
      - Sets the address of the HTTP proxy server.
+     -
    * - **proxy_user, proxy_password**
      - Configures proxy authentication.
+     -
    * - **verify_peer yes|no**
-     - Verify the peer's SSL certificate? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html>`_.
+     - Verify the peer's SSL certificate? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html>`__.
+     - yes
    * - **verify_host yes|no**
-     - Verify the certificate's name against host? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYHOST.html>`_.
+     - Verify the certificate's name against host? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYHOST.html>`__.
+     - yes
    * - **cacert**
-     - Set path to Certificate Authority (CA) bundle `More information <https://curl.se/libcurl/c/CURLOPT_CAINFO.html>`_.
+     - Set path to Certificate Authority (CA) bundle `More information <https://curl.se/libcurl/c/CURLOPT_CAINFO.html>`__.
+     -
+   * - **connect_timeout** [#since_0_24]_
+     - Set the the connect phase timeout in seconds. "0" is `libcurl`'s default built-in connection timeout - 300 seconds.
+       `More information <https://curl.se/libcurl/c/CURLOPT_CONNECTTIMEOUT.html>`__.
+     - 10
+   * - **verbose yes|no** [#since_0_24]_
+     - Set the onoff parameter to 1 to make the library display a lot of verbose information.
+       `More information <https://curl.se/libcurl/c/CURLOPT_VERBOSE.html>`__.
+     - no
+   * - **low_speed_limit** [#since_0_24]_
+     - The average transfer speed in bytes per second that the transfer should be below during **low_speed_time** seconds for libcurl to consider it to be too slow and abort.
+       `More information <https://curl.se/libcurl/c/CURLOPT_LOW_SPEED_LIMIT.html>`__.
+     - 0 (disabled)
+   * - **low_speed_time** [#since_0_24]_
+     - The time in number seconds that the transfer speed should be below the **low_speed_limit** for the libcurl to consider it too slow and abort.
+       `More information <https://curl.se/libcurl/c/CURLOPT_LOW_SPEED_TIME.html>`__.
+     - 0 (disabled)
+   * - **tcp_keepalive yes|no** [#since_0_24]_
+     - If set to yes, TCP keepalive probes will be sent. The delay and frequency of these probes can be controlled by the **tcp_keepidle** and **tcp_keepintvl** options, provided the operating system supports them.
+       `More information <https://curl.se/libcurl/c/CURLOPT_TCP_KEEPALIVE.html>`__.
+     - no (disabled)
+   * - **tcp_keepidle** [#since_0_24]_
+     - Sets the delay, in seconds, that the operating system will wait while the connection is idle before sending keepalive probes. Not all operating systems support this option.
+       `More information <https://curl.se/libcurl/c/CURLOPT_TCP_KEEPIDLE.html>`__.
+     - 60
+   * - **tcp_keepintvl** [#since_0_24]_
+     - Sets the interval, in seconds, that the operating system will wait between sending keepalive probes. Not all operating systems support this option.
+       `More information <https://curl.se/libcurl/c/CURLOPT_TCP_KEEPINTVL.html>`__.
+     - 60
+
+Note: the ``low_speed`` and ``tcp_keep`` options may help solve network interruptions and connections dropped by server. Please refer to this curl issue for discussion: https://github.com/curl/curl/issues/8345
 
 ffmpeg
 ------
@@ -271,7 +312,7 @@ used according to RFC2224. Example:
 
      mpc add nfs://servername/path/filename.ogg
 
-This plugin uses :program:`libnfs`, which supports only NFS version 3.
+This plugin uses :program:`libnfs`.
 Since :program:`MPD` is not allowed to bind to so-called "privileged
 ports", the NFS server needs to enable the ``insecure`` setting;
 example :file:`/etc/exports`:
@@ -435,19 +476,6 @@ Video game music file emulator based on `game-music-emu <https://bitbucket.org/m
    * - **default_fade**
      - The default fade-out time, in seconds. Used by songs that don't specify their own fade-out time.
 
-hybrid_dsd
-----------
-
-`Hybrid-DSD
-<http://dsdmaster.blogspot.de/p/bitperfect-introduces-hybrid-dsd-file.html>`_
-is an MP4 container file (:file:`*.m4a`) which contains both ALAC and
-DSD data. It is disabled by default, and works only if you explicitly
-enable it. Without this plugin, the ALAC parts gets handled by the
-:ref:`FFmpeg decoder plugin <decoder_ffmpeg>`. This
-plugin should be enabled only if you have a bit-perfect playback path
-to a DSD-capable DAC; for everybody else, playing back the ALAC copy
-of the file is better.
-
 mad
 ---
 
@@ -508,6 +536,8 @@ Module player based on `libopenmpt <https://lib.openmpt.org>`_.
      - Sets the amount of volume ramping done by the libopenmpt mixer. The default value is -1, which indicates a recommended default value. The meaningful value range is [-1..10]. A value of 0 completely disables volume ramping. This might cause clicks in sound output. Higher values imply slower/softer volume ramps.
    * - **sync_samples yes|no**
      - Syncs sample playback when seeking. Defaults to yes.
+   * - **at_end fadeout|stop**
+     - Chooses the behaviour when the end of song is reached. "fadeout": Fades the module out for a short while. "stop": will immediately stop playing and MPD will play next track.
    * - **emulate_amiga yes|no**
      - Enables the Amiga resampler for Amiga modules. This emulates the sound characteristics of the Paula chip and overrides the selected interpolation filter. Non-Amiga module formats are not affected by this setting. Defaults to yes.
    * - **emulate_amiga_type**
@@ -866,6 +896,11 @@ The `Advanced Linux Sound Architecture (ALSA) <http://www.alsa-project.org/>`_ p
        
        Example: "96000:16:* 192000:24:* dsd64:*=dop *:dsd:*".
 
+   * - **close_on_pause yes|no**
+     - Close the ALSA device while playback is paused?  This defaults
+       to *yes* because this allows other applications to use the
+       device while MPD is paused.
+
 The according hardware mixer plugin understands the following settings:
 
 .. list-table::
@@ -942,14 +977,6 @@ The fifo plugin writes raw PCM data to a FIFO (First In, First Out) file. The da
    * - **path P**
      - This specifies the path of the FIFO to write to. Must be an absolute path. If the path does not exist, it will be created when MPD is started, and removed when MPD is stopped. The FIFO will be created with the same user and group as MPD is running as. Default permissions can be modified by using the builtin shell command umask. If a FIFO already exists at the specified path it will be reused, and will not be removed when MPD is stopped. You can use the "mkfifo" command to create this, and then you may modify the permissions to your liking.
 
-haiku
------
-
-Use the SoundPlayer API on the Haiku operating system.
-
-This plugin is unmaintained and contains known bugs.  It will be
-removed soon, unless there is a new maintainer.
-
 
 jack
 ----
@@ -1000,10 +1027,23 @@ It is highly recommended to configure a fixed format, because a stream cannot sw
      - Binds the HTTP server to the specified port.
    * - **bind_to_address ADDR**
      - Binds the HTTP server to the specified address (IPv4, IPv6 or local socket). Multiple addresses in parallel are not supported.
+   * - **dscp_class CLASS**
+     - Sets a DSCP (`Differentiated Services Code Point
+       <https://en.wikipedia.org/wiki/Differentiated_services>`__)
+       class for outgoing traffic.  This can either be a name
+       (``CS*``, ``LE``, ``AF*``, ``EF``) or numeric (decimal or
+       hexadecimal).  A reasonable choice for this setting is ``CS3``
+       ("broadcast video").
    * - **encoder NAME**
      - Chooses an encoder plugin. A list of encoder plugins can be found in the encoder plugin reference :ref:`encoder_plugins`.
    * - **max_clients MC**
      - Sets a limit, number of concurrent clients. When set to 0 no limit will apply.
+   * - **genre GENRE**
+     - The genre of the stream. Will be reflected in the `icy-genre` header of the stream.
+   * - **website URL**
+     - The website of the stream. Will be reflected in the `icy-url` header of the stream.
+
+The `name` from the `audio_output` block that uses this output plugin will be reflected as the stream name in the `icy-name` header of the stream.
 
 null
 ----
@@ -1394,6 +1434,8 @@ xspf
 Reads XSPF playlist files. 
 
 
+.. _archive_plugins:
+
 Archive plugins
 ===============
 
@@ -1408,3 +1450,7 @@ Allows to load music files from ZIP archives using `zziplib <http://zziplib.sour
 iso
 ---
 Allows to load music files from ISO 9660 images using `libcdio <https://www.gnu.org/software/libcdio/>`_.
+
+.. rubric:: Footnotes
+
+.. [#since_0_24] Since :program:`MPD` 0.24

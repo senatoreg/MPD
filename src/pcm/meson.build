@@ -30,6 +30,7 @@ pcm_basic = static_library(
   include_directories: inc,
   dependencies: [
     util_dep,
+    fmt_dep,
   ],
 )
 
@@ -46,7 +47,10 @@ pcm_sources = [
   'GlueResampler.cxx',
   'FallbackResampler.cxx',
   'ConfiguredResampler.cxx',
-  'AudioCompress/compress.c',
+  'Normalizer.cxx',
+  'ReplayGainAnalyzer.cxx',
+  'MixRampAnalyzer.cxx',
+  'MixRampGlue.cxx',
 ]
 
 libsamplerate_dep = dependency('samplerate', version: '>= 0.1.3', required: get_option('libsamplerate'))
@@ -55,7 +59,7 @@ if libsamplerate_dep.found()
   pcm_sources += 'LibsamplerateResampler.cxx'
 endif
 
-soxr_dep = dependency('soxr', required: get_option('soxr'))
+soxr_dep = dependency('soxr', version: '>= 0.1.2', required: get_option('soxr'))
 if soxr_dep.found()
   conf.set('ENABLE_SOXR', true)
   pcm_sources += 'SoxrResampler.cxx'
@@ -71,6 +75,7 @@ pcm = static_library(
     libsamplerate_dep,
     soxr_dep,
     log_dep,
+    config_dep,
   ],
 )
 

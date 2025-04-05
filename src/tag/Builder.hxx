@@ -1,32 +1,16 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_TAG_BUILDER_HXX
 #define MPD_TAG_BUILDER_HXX
 
-#include "Type.h"
+#include "Type.hxx"
 #include "Chrono.hxx"
 
-#include <vector>
 #include <memory>
+#include <string_view>
+#include <vector>
 
-struct StringView;
 struct TagItem;
 struct Tag;
 
@@ -137,7 +121,7 @@ public:
 	 * A variant of AddItem() which does not attempt to fix up the
 	 * value and does not check whether the tag type is disabled.
 	 */
-	void AddItemUnchecked(TagType type, StringView value) noexcept;
+	void AddItemUnchecked(TagType type, std::string_view value) noexcept;
 
 	/**
 	 * Appends a new tag item.
@@ -146,16 +130,7 @@ public:
 	 * @param value the value of the tag item (not null-terminated)
 	 * @param length the length of #value
 	 */
-	void AddItem(TagType type, StringView value) noexcept;
-
-	/**
-	 * Appends a new tag item.
-	 *
-	 * @param type the type of the new tag item
-	 * @param value the value of the tag item (null-terminated)
-	 */
-	[[gnu::nonnull]]
-	void AddItem(TagType type, const char *value) noexcept;
+	void AddItem(TagType type, std::string_view value) noexcept;
 
 	/**
 	 * Appends a new tag item with an empty value.  Do not use
@@ -175,7 +150,7 @@ public:
 	void RemoveType(TagType type) noexcept;
 
 private:
-	void AddItemInternal(TagType type, StringView value) noexcept;
+	void AddItemInternal(TagType type, std::string_view value) noexcept;
 };
 
 #endif

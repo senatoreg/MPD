@@ -1,35 +1,17 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ReplayGainFilterPlugin.hxx"
 #include "filter/Filter.hxx"
 #include "filter/Prepared.hxx"
-#include "ReplayGainInfo.hxx"
-#include "ReplayGainConfig.hxx"
-#include "mixer/MixerControl.hxx"
-#include "mixer/MixerInternal.hxx"
+#include "tag/ReplayGainInfo.hxx"
+#include "config/ReplayGainConfig.hxx"
+#include "mixer/Control.hxx"
+#include "mixer/Mixer.hxx"
 #include "mixer/Listener.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "pcm/Volume.hxx"
-#include "util/ConstBuffer.hxx"
 #include "util/Domain.hxx"
-#include "Idle.hxx"
 #include "Log.hxx"
 
 #include <cassert>
@@ -111,7 +93,7 @@ public:
 	void Update();
 
 	/* virtual methods from class Filter */
-	ConstBuffer<void> FilterPCM(ConstBuffer<void> src) override;
+	std::span<const std::byte> FilterPCM(std::span<const std::byte> src) override;
 };
 
 class PreparedReplayGainFilter final : public PreparedFilter {
@@ -171,7 +153,7 @@ ReplayGainFilter::Update()
 			_volume = 100;
 
 		try {
-			mixer_set_volume(mixer, _volume);
+			mixer->LockSetVolume(_volume);
 
 			/* invoke the mixer's listener manually, just
 			   in case the mixer implementation didn't do
@@ -201,11 +183,11 @@ PreparedReplayGainFilter::Open(AudioFormat &af)
 						  af, mixer, base);
 }
 
-ConstBuffer<void>
-ReplayGainFilter::FilterPCM(ConstBuffer<void> src)
+std::span<const std::byte>
+ReplayGainFilter::FilterPCM(std::span<const std::byte> src)
 {
 	return mixer != nullptr
-		? src
+		? std::span<const std::byte>{src}
 		: pv.Apply(src);
 }
 

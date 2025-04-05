@@ -1,27 +1,11 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_INOTIFY_UPDATE_HXX
 #define MPD_INOTIFY_UPDATE_HXX
 
-#include "InotifySource.hxx"
 #include "InotifyQueue.hxx"
+#include "event/InotifyEvent.hxx"
 
 #include <map>
 #include <memory>
@@ -33,8 +17,8 @@ struct WatchDirectory;
 /**
  * Glue code between InotifySource and InotifyQueue.
  */
-class InotifyUpdate {
-	InotifySource source;
+class InotifyUpdate final : InotifyHandler {
+	InotifyEvent inotify_event;
 	InotifyQueue queue;
 
 	const unsigned max_depth;
@@ -50,14 +34,6 @@ public:
 	void Start(Path path);
 
 private:
-	void InotifyCallback(int wd, unsigned mask, const char *name) noexcept;
-
-	static void InotifyCallback(int wd, unsigned mask,
-				    const char *name, void *ctx) noexcept {
-		auto &iu = *(InotifyUpdate *)ctx;
-		iu.InotifyCallback(wd, mask, name);
-	}
-
 	void AddToMap(WatchDirectory &directory) noexcept;
 	void RemoveFromMap(WatchDirectory &directory) noexcept;
 	void Disable(WatchDirectory &directory) noexcept;
@@ -66,6 +42,11 @@ private:
 	void RecursiveWatchSubdirectories(WatchDirectory &parent,
 					  Path path_fs,
 					  unsigned depth) noexcept;
+
+private:
+	/* virtual methods from class InotifyHandler */
+	void OnInotify(int wd, unsigned mask, const char *name) override;
+	void OnInotifyError(std::exception_ptr error) noexcept override;
 };
 
 /**

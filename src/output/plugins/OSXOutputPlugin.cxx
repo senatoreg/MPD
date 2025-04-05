@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "OSXOutputPlugin.hxx"
@@ -24,28 +8,28 @@
 #include "apple/StringRef.hxx"
 #include "apple/Throw.hxx"
 #include "../OutputAPI.hxx"
-#include "mixer/MixerList.hxx"
-#include "util/RuntimeError.hxx"
+#include "mixer/plugins/OSXMixerPlugin.hxx"
+#include "lib/fmt/RuntimeError.hxx"
+#include "lib/fmt/ToBuffer.hxx"
 #include "util/Domain.hxx"
 #include "util/Manual.hxx"
-#include "util/ConstBuffer.hxx"
 #include "pcm/Export.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "util/ByteOrder.hxx"
 #include "util/CharUtil.hxx"
+#include "util/RingBuffer.hxx"
 #include "util/StringAPI.hxx"
 #include "util/StringBuffer.hxx"
-#include "util/StringFormat.hxx"
 #include "Log.hxx"
 
 #include <CoreAudio/CoreAudio.h>
 #include <AudioUnit/AudioUnit.h>
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreServices/CoreServices.h>
-#include <boost/lockfree/spsc_queue.hpp>
 
 #include <memory>
+#include <span>
 
 // Backward compatibility from OSX 12.0 API change
 #if (__MAC_OS_X_VERSION_MAX_ALLOWED >= 120000)
@@ -58,20 +42,20 @@
 
 static constexpr unsigned MPD_OSX_BUFFER_TIME_MS = 100;
 
-static StringBuffer<64>
-StreamDescriptionToString(const AudioStreamBasicDescription desc)
+static auto
+StreamDescriptionToString(const AudioStreamBasicDescription desc) noexcept
 {
 	// Only convert the lpcm formats (nothing else supported / used by MPD)
 	assert(desc.mFormatID == kAudioFormatLinearPCM);
 
-	return StringFormat<64>("%u channel %s %sinterleaved %u-bit %s %s (%uHz)",
-				desc.mChannelsPerFrame,
-				(desc.mFormatFlags & kAudioFormatFlagIsNonMixable) ? "" : "mixable",
-				(desc.mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? "non-" : "",
-				desc.mBitsPerChannel,
-				(desc.mFormatFlags & kAudioFormatFlagIsFloat) ? "Float" : "SInt",
-				(desc.mFormatFlags & kAudioFormatFlagIsBigEndian) ? "BE" : "LE",
-				(UInt32)desc.mSampleRate);
+	return FmtBuffer<256>("{} channel {} {}interleaved {}-bit {} {} ({}Hz)",
+			      desc.mChannelsPerFrame,
+			      (desc.mFormatFlags & kAudioFormatFlagIsNonMixable) ? "" : "mixable",
+			      (desc.mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? "non-" : "",
+			      desc.mBitsPerChannel,
+			      (desc.mFormatFlags & kAudioFormatFlagIsFloat) ? "Float" : "SInt",
+			      (desc.mFormatFlags & kAudioFormatFlagIsBigEndian) ? "BE" : "LE",
+			      desc.mSampleRate);
 }
 
 
@@ -105,7 +89,8 @@ struct OSXOutput final : AudioOutput {
 	AudioComponentInstance au;
 	AudioStreamBasicDescription asbd;
 
-	boost::lockfree::spsc_queue<uint8_t> *ring_buffer;
+	using RingBuffer = ::RingBuffer<std::byte>;
+	RingBuffer ring_buffer;
 
 	OSXOutput(const ConfigBlock &block);
 
@@ -121,7 +106,7 @@ private:
 	void Close() noexcept override;
 
 	std::chrono::steady_clock::duration Delay() const noexcept override;
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 	bool Pause() override;
 	void Cancel() noexcept override;
 };
@@ -247,8 +232,8 @@ osx_output_parse_channel_map(const char *device_name,
 
 	while (*channel_map_str) {
 		if (inserted_channels >= num_channels)
-			throw FormatRuntimeError("%s: channel map contains more than %u entries or trailing garbage",
-						 device_name, num_channels);
+			throw FmtRuntimeError("{}: channel map contains more than {} entries or trailing garbage",
+					      device_name, num_channels);
 
 		if (!want_number && *channel_map_str == ',') {
 			++channel_map_str;
@@ -262,8 +247,8 @@ osx_output_parse_channel_map(const char *device_name,
 			char *endptr;
 			channel_map[inserted_channels] = strtol(channel_map_str, &endptr, 10);
 			if (channel_map[inserted_channels] < -1)
-				throw FormatRuntimeError("%s: channel map value %d not allowed (must be -1 or greater)",
-							 device_name, channel_map[inserted_channels]);
+				throw FmtRuntimeError("{}: channel map value {} not allowed (must be -1 or greater)",
+						      device_name, channel_map[inserted_channels]);
 
 			channel_map_str = endptr;
 			want_number = false;
@@ -275,13 +260,13 @@ osx_output_parse_channel_map(const char *device_name,
 			continue;
 		}
 
-		throw FormatRuntimeError("%s: invalid character '%c' in channel map",
-					 device_name, *channel_map_str);
+		throw FmtRuntimeError("{}: invalid character {:?} in channel map",
+				      device_name, *channel_map_str);
 	}
 
 	if (inserted_channels < num_channels)
-		throw FormatRuntimeError("%s: channel map contains less than %u entries",
-					 device_name, num_channels);
+		throw FmtRuntimeError("{}: channel map contains less than {} entries",
+				      device_name, num_channels);
 }
 
 static UInt32
@@ -453,8 +438,8 @@ osx_output_set_device_format(AudioDeviceID dev_id,
 						 sizeof(output_format),
 						 &output_format);
 		if (err != noErr)
-			throw FormatRuntimeError("Failed to change the stream format: %d",
-						 err);
+			throw FmtRuntimeError("Failed to change the stream format: {}",
+					      err);
 	}
 
 	return output_format.mSampleRate;
@@ -540,7 +525,7 @@ osx_output_hog_device(AudioDeviceID dev_id, bool hog) noexcept
 	}
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
 IsAudioDeviceName(AudioDeviceID id, const char *expected_name) noexcept
 {
@@ -582,8 +567,7 @@ FindAudioDeviceByName(const char *name)
 			return id;
 	}
 
-	throw FormatRuntimeError("Found no audio device with name '%s' ",
-				 name);
+	throw FmtRuntimeError("Found no audio device names {:?}", name);
 }
 
 static void
@@ -629,8 +613,7 @@ osx_render(void *vdata,
 
 	std::size_t count = in_number_frames * od->asbd.mBytesPerFrame;
 	buffer_list->mBuffers[0].mDataByteSize =
-		od->ring_buffer->pop((uint8_t *)buffer_list->mBuffers[0].mData,
-				     count);
+		od->ring_buffer.ReadTo({(std::byte *)buffer_list->mBuffers[0].mData, count});
 	return noErr;
 }
 
@@ -688,7 +671,7 @@ OSXOutput::Close() noexcept
 	if (started)
 		AudioOutputUnitStop(au);
 	AudioUnitUninitialize(au);
-	delete ring_buffer;
+	ring_buffer = {};
 }
 
 void
@@ -773,30 +756,28 @@ OSXOutput::Open(AudioFormat &audio_format)
 						   MPD_OSX_BUFFER_TIME_MS * pcm_export->GetOutputFrameSize() * asbd.mSampleRate / 1000);
 	}
 #endif
-	ring_buffer = new boost::lockfree::spsc_queue<uint8_t>(ring_buffer_size);
+	ring_buffer = RingBuffer{ring_buffer_size};
 
 	pause = false;
 	started = false;
 }
 
-size_t
-OSXOutput::Play(const void *chunk, size_t size)
+std::size_t
+OSXOutput::Play(std::span<const std::byte> input)
 {
-	assert(size > 0);
+	assert(!input.empty());
 
 	pause = false;
 
-	ConstBuffer<uint8_t> input((const uint8_t *)chunk, size);
-
 #ifdef ENABLE_DSD
 	if (dop_enabled) {
-		input = ConstBuffer<uint8_t>::FromVoid(pcm_export->Export(input.ToVoid()));
+		input = pcm_export->Export(input);
 		if (input.empty())
-			return size;
+			return input.size();
 	}
 #endif
 
-	size_t bytes_written = ring_buffer->push(input.data, input.size);
+	size_t bytes_written = ring_buffer.WriteFrom(input);
 
 	if (!started) {
 		OSStatus status = AudioOutputUnitStart(au);
@@ -817,7 +798,7 @@ OSXOutput::Play(const void *chunk, size_t size)
 std::chrono::steady_clock::duration
 OSXOutput::Delay() const noexcept
 {
-	return ring_buffer->write_available() && !pause
+	return !ring_buffer.IsFull() && !pause
 		? std::chrono::steady_clock::duration::zero()
 		: std::chrono::milliseconds(MPD_OSX_BUFFER_TIME_MS / 4);
 }
@@ -842,7 +823,7 @@ OSXOutput::Cancel() noexcept
 		started = false;
 	}
 
-	ring_buffer->reset();
+	ring_buffer.Clear();
 #ifdef ENABLE_DSD
 	pcm_export->Reset();
 #endif

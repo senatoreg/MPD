@@ -1,37 +1,21 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
-#ifndef MPD_MUSIC_CHUNK_HXX
-#define MPD_MUSIC_CHUNK_HXX
+#pragma once
 
 #include "MusicChunkPtr.hxx"
 #include "Chrono.hxx"
-#include "ReplayGainInfo.hxx"
-#include "util/WritableBuffer.hxx"
+#include "tag/ReplayGainInfo.hxx"
 
 #ifndef NDEBUG
 #include "pcm/AudioFormat.hxx"
 #endif
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 static constexpr size_t CHUNK_SIZE = 4096;
 
@@ -116,7 +100,7 @@ struct MusicChunkInfo {
  */
 struct MusicChunk : MusicChunkInfo {
 	/** the data (probably PCM) */
-	uint8_t data[CHUNK_SIZE - sizeof(MusicChunkInfo)];
+	std::byte data[CHUNK_SIZE - sizeof(MusicChunkInfo)];
 
 	/**
 	 * Prepares appending to the music chunk.  Returns a buffer
@@ -129,7 +113,7 @@ struct MusicChunk : MusicChunkInfo {
 	 * @param bit_rate the current bit rate of the source file
 	 * @return a writable buffer, or nullptr if the chunk is full
 	 */
-	WritableBuffer<void> Write(AudioFormat af,
+	std::span<std::byte> Write(AudioFormat af,
 				   SongTime data_time,
 				   uint16_t bit_rate) noexcept;
 
@@ -143,8 +127,10 @@ struct MusicChunk : MusicChunkInfo {
 	 * @return true if the chunk is full
 	 */
 	bool Expand(AudioFormat af, size_t length) noexcept;
+
+	std::span<const std::byte> ReadData() const noexcept {
+		return {data, length};
+	}
 };
 
 static_assert(sizeof(MusicChunk) == CHUNK_SIZE, "Wrong size");
-
-#endif

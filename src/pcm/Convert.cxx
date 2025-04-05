@@ -1,25 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Convert.hxx"
 #include "ConfiguredResampler.hxx"
-#include "util/ConstBuffer.hxx"
+#include "util/SpanCast.hxx"
 
 #include <cassert>
 #include <stdexcept>
@@ -111,16 +95,15 @@ PcmConvert::Reset() noexcept
 #endif
 }
 
-ConstBuffer<void>
-PcmConvert::Convert(ConstBuffer<void> buffer)
+std::span<const std::byte>
+PcmConvert::Convert(std::span<const std::byte> buffer)
 {
 #ifdef ENABLE_DSD
 	if (src_format.format == SampleFormat::DSD) {
-		auto s = ConstBuffer<uint8_t>::FromVoid(buffer);
 		auto d = dsd2pcm_float
-			? dsd.ToFloat(src_format.channels, s).ToVoid()
-			: dsd.ToS24(src_format.channels, s).ToVoid();
-		if (d.IsNull())
+			? std::as_bytes(dsd.ToFloat(src_format.channels, buffer))
+			: std::as_bytes(dsd.ToS24(src_format.channels, buffer));
+		if (d.data() == nullptr)
 			throw std::runtime_error("DSD to PCM conversion failed");
 
 		buffer = d;
@@ -139,12 +122,12 @@ PcmConvert::Convert(ConstBuffer<void> buffer)
 	return buffer;
 }
 
-ConstBuffer<void>
+std::span<const std::byte>
 PcmConvert::Flush()
 {
 	if (enable_resampler) {
 		auto buffer = resampler.Flush();
-		if (!buffer.IsNull()) {
+		if (buffer.data() != nullptr) {
 			if (enable_format)
 				buffer = format_converter.Convert(buffer);
 
@@ -155,5 +138,5 @@ PcmConvert::Flush()
 		}
 	}
 
-	return nullptr;
+	return {};
 }

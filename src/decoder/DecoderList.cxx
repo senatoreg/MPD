@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "DecoderList.hxx"
@@ -23,13 +7,13 @@
 #include "Domain.hxx"
 #include "decoder/Features.h"
 #include "lib/fmt/ExceptionFormatter.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "config/Data.hxx"
 #include "config/Block.hxx"
 #include "plugins/AudiofileDecoderPlugin.hxx"
 #include "plugins/PcmDecoderPlugin.hxx"
 #include "plugins/DsdiffDecoderPlugin.hxx"
 #include "plugins/DsfDecoderPlugin.hxx"
-#include "plugins/HybridDsdDecoderPlugin.hxx"
 #include "plugins/FlacDecoderPlugin.h"
 #include "plugins/OpusDecoderPlugin.h"
 #include "plugins/VorbisDecoderPlugin.h"
@@ -48,20 +32,20 @@
 #include "plugins/MpcdecDecoderPlugin.hxx"
 #include "plugins/FluidsynthDecoderPlugin.hxx"
 #include "plugins/SidplayDecoderPlugin.hxx"
-#include "util/RuntimeError.hxx"
 #include "Log.hxx"
 #include "PluginUnavailable.hxx"
 
+#include <algorithm> // for std::any_of()
 #include <iterator>
 
 #include <string.h>
 
-constexpr const struct DecoderPlugin *decoder_plugins[] = {
-#ifdef ENABLE_MAD
-	&mad_decoder_plugin,
-#endif
+constinit const struct DecoderPlugin *const decoder_plugins[] = {
 #ifdef ENABLE_MPG123
 	&mpg123_decoder_plugin,
+#endif
+#ifdef ENABLE_MAD
+	&mad_decoder_plugin,
 #endif
 #ifdef ENABLE_VORBIS_DECODER
 	&vorbis_decoder_plugin,
@@ -76,7 +60,6 @@ constexpr const struct DecoderPlugin *decoder_plugins[] = {
 #ifdef ENABLE_DSD
 	&dsdiff_decoder_plugin,
 	&dsf_decoder_plugin,
-	&hybrid_dsd_decoder_plugin,
 #endif
 #ifdef ENABLE_FAAD
 	&faad_decoder_plugin,
@@ -170,11 +153,11 @@ decoder_plugin_init_all(const ConfigData &config)
 				decoder_plugins_enabled[i] = true;
 		} catch (const PluginUnavailable &e) {
 			FmtError(decoder_domain,
-				 "Decoder plugin '{}' is unavailable: {}",
+				 "Decoder plugin {:?} is unavailable: {}",
 				 plugin.name, std::current_exception());
 		} catch (...) {
-			std::throw_with_nested(FormatRuntimeError("Failed to initialize decoder plugin '%s'",
-								  plugin.name));
+			std::throw_with_nested(FmtRuntimeError("Failed to initialize decoder plugin {:?}",
+							       plugin.name));
 		}
 	}
 }
@@ -182,15 +165,17 @@ decoder_plugin_init_all(const ConfigData &config)
 void
 decoder_plugin_deinit_all() noexcept
 {
-	decoder_plugins_for_each_enabled([=](const DecoderPlugin &plugin){
-			plugin.Finish();
-		});
+	for (const auto &plugin : GetEnabledDecoderPlugins())
+		plugin.Finish();
 }
 
 bool
 decoder_plugins_supports_suffix(std::string_view suffix) noexcept
 {
-	return decoder_plugins_try([suffix](const DecoderPlugin &plugin){
-			return plugin.SupportsSuffix(suffix);
-		});
+	for (const auto &plugin : GetEnabledDecoderPlugins()) {
+		if (plugin.SupportsSuffix(suffix))
+			return true;
+	}
+
+	return false;
 }

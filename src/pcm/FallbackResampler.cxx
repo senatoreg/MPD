@@ -1,23 +1,8 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "FallbackResampler.hxx"
+#include "util/SpanCast.hxx"
 
 #include <cassert>
 
@@ -61,22 +46,22 @@ FallbackPcmResampler::Close() noexcept
 }
 
 template<typename T>
-static ConstBuffer<T>
+static std::span<const T>
 pcm_resample_fallback(PcmBuffer &buffer,
 		      unsigned channels,
 		      unsigned src_rate,
-		      ConstBuffer<T> src,
+		      std::span<const T> src,
 		      unsigned dest_rate) noexcept
 {
 	unsigned dest_pos = 0;
-	unsigned src_frames = src.size / channels;
+	unsigned src_frames = src.size() / channels;
 	unsigned dest_frames =
 		(src_frames * dest_rate + src_rate - 1) / src_rate;
 	unsigned dest_samples = dest_frames * channels;
-	size_t dest_size = dest_samples * sizeof(*src.data);
+	size_t dest_size = dest_samples * sizeof(T);
 	T *dest_buffer = (T *)buffer.Get(dest_size);
 
-	assert((src.size % channels) == 0);
+	assert((src.size() % channels) == 0);
 
 	switch (channels) {
 	case 1:
@@ -101,20 +86,20 @@ pcm_resample_fallback(PcmBuffer &buffer,
 }
 
 template<typename T>
-static ConstBuffer<void>
+static std::span<const std::byte>
 pcm_resample_fallback_void(PcmBuffer &buffer,
 			   unsigned channels,
 			   unsigned src_rate,
-			   ConstBuffer<void> src,
+			   std::span<const std::byte> src,
 			   unsigned dest_rate) noexcept
 {
-	const auto typed_src = ConstBuffer<T>::FromVoid(src);
-	return pcm_resample_fallback(buffer, channels, src_rate, typed_src,
-				     dest_rate).ToVoid();
+	const auto typed_src = FromBytesStrict<const T>(src);
+	return std::as_bytes(pcm_resample_fallback(buffer, channels, src_rate, typed_src,
+						   dest_rate));
 }
 
-ConstBuffer<void>
-FallbackPcmResampler::Resample(ConstBuffer<void> src)
+std::span<const std::byte>
+FallbackPcmResampler::Resample(std::span<const std::byte> src)
 {
 	switch (format.format) {
 	case SampleFormat::UNDEFINED:

@@ -1,5 +1,15 @@
+net_sources = []
+
 have_tcp = get_option('tcp')
 conf.set('HAVE_TCP', have_tcp)
+
+if have_tcp
+  net_sources += [
+    'IPv4Address.cxx',
+    'IPv6Address.cxx',
+    'DscpParser.cxx',
+  ]
+endif
 
 if have_tcp and not get_option('ipv6').disabled()
   if is_windows
@@ -21,6 +31,7 @@ conf.set('HAVE_UN', have_local_socket)
 if have_local_socket
   conf.set('HAVE_STRUCT_UCRED', compiler.has_header_symbol('sys/socket.h', 'struct ucred') and compiler.has_header_symbol('sys/socket.h', 'SO_PEERCRED'))
   conf.set('HAVE_GETPEEREID', compiler.has_function('getpeereid'))
+  net_sources += 'LocalSocketAddress.cxx'
 endif
 
 if not have_tcp and not have_local_socket
@@ -29,24 +40,28 @@ endif
 
 net = static_library(
   'net',
+  net_sources,
+  'FormatAddress.cxx',
   'ToString.cxx',
   'HostParser.cxx',
   'Resolver.cxx',
   'AddressInfo.cxx',
   'StaticSocketAddress.cxx',
   'AllocatedSocketAddress.cxx',
-  'IPv4Address.cxx',
-  'IPv6Address.cxx',
   'SocketAddress.cxx',
   'SocketUtil.cxx',
   'SocketDescriptor.cxx',
   'SocketError.cxx',
   include_directories: inc,
+  dependencies: [
+    fmt_dep,
+  ],
 )
 
 net_dep = declare_dependency(
   link_with: net,
   dependencies: [
     system_dep,
+    io_dep,
   ],
 )

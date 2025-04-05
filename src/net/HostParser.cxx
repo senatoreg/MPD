@@ -1,34 +1,6 @@
-/*
- * Copyright 2007-2020 CM4all GmbH
- * All rights reserved.
- *
- * author: Max Kellermann <mk@cm4all.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright CM4all GmbH
+// author: Max Kellermann <mk@cm4all.com>
 
 #include "HostParser.hxx"
 #include "util/CharUtil.hxx"
@@ -83,10 +55,22 @@ FindIPv6End(const char *p) noexcept
 	return p;
 }
 
+static constexpr std::string_view
+SV(const char *begin, const char *end) noexcept
+{
+#if __cplusplus >= 202002 && !defined(__clang__)
+	return {begin, end};
+#else
+	/* kludge for libc++ which does not yet implement the C++20
+	   iterator constructor */
+	return {begin, std::size_t(end - begin)};
+#endif
+}
+
 ExtractHostResult
 ExtractHost(const char *src) noexcept
 {
-	ExtractHostResult result{nullptr, src};
+	ExtractHostResult result{{}, src};
 	const char *hostname;
 
 	if (IsValidHostnameChar(*src)) {
@@ -100,7 +84,7 @@ ExtractHost(const char *src) noexcept
 					/* found a second colon: assume it's an IPv6
 					   address */
 					result.end = FindIPv6End(src + 1);
-					result.host = {hostname, result.end};
+					result.host = SV(hostname, result.end);
 					return result;
 				} else
 					/* remember the position of the first colon */
@@ -115,11 +99,11 @@ ExtractHost(const char *src) noexcept
 			src = colon;
 
 		result.end = src;
-		result.host = {hostname, result.end};
+		result.host = SV(hostname, result.end);
 	} else if (src[0] == ':' && src[1] == ':') {
 		/* IPv6 address beginning with "::" */
 		result.end = FindIPv6End(src + 2);
-		result.host = {src, result.end};
+		result.host = SV(src, result.end);
 	} else if (src[0] == '[') {
 		/* "[hostname]:port" (IPv6?) */
 
@@ -129,7 +113,7 @@ ExtractHost(const char *src) noexcept
 			/* failed, return nullptr */
 			return result;
 
-		result.host = {hostname, end};
+		result.host = SV(hostname, end);
 		result.end = end + 1;
 	} else {
 		/* failed, return nullptr */

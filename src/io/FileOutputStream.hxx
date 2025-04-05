@@ -1,40 +1,13 @@
-/*
- * Copyright (C) 2014-2018 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
-#ifndef FILE_OUTPUT_STREAM_HXX
-#define FILE_OUTPUT_STREAM_HXX
+#pragma once
 
 #include "OutputStream.hxx"
 #include "fs/AllocatedPath.hxx"
 
 #ifndef _WIN32
-#include "io/FileDescriptor.hxx"
+#include "FileDescriptor.hxx"
 #endif
 
 #include <cassert>
@@ -58,8 +31,22 @@
 
 class Path;
 
+/**
+ * An #OutputStream implementation which writes to a file.
+ *
+ * The destructor will attempt to roll back the changes by calling
+ * Cancel().  To confirm that data shall be written and the existing
+ * file shall be replaced, call Commit().
+ */
 class FileOutputStream final : public OutputStream {
 	const AllocatedPath path;
+
+	/**
+	 * If a temporary file is being written to, then this is its
+	 * path.  Commit() will rename it to the path specified in the
+	 * constructor.
+	 */
+	AllocatedPath tmp_path{nullptr};
 
 #ifdef __linux__
 	const FileDescriptor directory_fd;
@@ -132,13 +119,39 @@ public:
 		return path;
 	}
 
+	/**
+	 * Returns the current offset.
+	 */
 	[[gnu::pure]]
 	uint64_t Tell() const noexcept;
 
 	/* virtual methods from class OutputStream */
-	void Write(const void *data, size_t size) override;
+	void Write(std::span<const std::byte> src) override;
 
+	/**
+	 * Flush all data written to this object to disk (but does not
+	 * commit to the final path).  This method blocks until this
+	 * flush is complete.  It can be called repeatedly.
+	 *
+	 * Throws on error.
+	 */
+	void Sync();
+
+	/**
+	 * Commit all data written to the file and make the file
+	 * visible on the specified path.
+	 *
+	 * After returning, this object must not be used again.
+	 *
+	 * Throws on error.
+	 */
 	void Commit();
+
+	/**
+	 * Attempt to roll back all changes.
+	 *
+	 * After returning, this object must not be used again.
+	 */
 	void Cancel() noexcept;
 
 private:
@@ -172,6 +185,7 @@ private:
 		return fd.IsDefined();
 #endif
 	}
-};
 
-#endif
+	void RenameOrThrow(Path old_path, Path new_path) const;
+	void Delete(Path delete_path) const noexcept;
+};

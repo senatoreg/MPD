@@ -1,28 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Control.hxx"
 #include "Filtered.hxx"
 #include "Client.hxx"
 #include "Domain.hxx"
 #include "lib/fmt/ExceptionFormatter.hxx"
-#include "mixer/MixerControl.hxx"
+#include "mixer/Mixer.hxx"
 #include "config/Block.hxx"
 #include "Log.hxx"
 
@@ -41,6 +25,7 @@ AudioOutputControl::AudioOutputControl(std::unique_ptr<FilteredAudioOutput> _out
 	 thread(BIND_THIS_METHOD(Task)),
 	 tags(block.GetBlockValue("tags", true)),
 	 always_on(block.GetBlockValue("always_on", false)),
+	 always_off(block.GetBlockValue("always_off", false)),
 	 enabled(block.GetBlockValue("enabled", true))
 {
 }
@@ -52,7 +37,8 @@ AudioOutputControl::AudioOutputControl(AudioOutputControl &&src,
 	 client(_client),
 	 thread(BIND_THIS_METHOD(Task)),
 	 tags(src.tags),
-	 always_on(src.always_on)
+	 always_on(src.always_on),
+	 always_off(src.always_off)
 {
 }
 
@@ -68,7 +54,7 @@ AudioOutputControl::Steal() noexcept
 
 	/* close and disable the output */
 	{
-		std::unique_lock<Mutex> lock(mutex);
+		std::unique_lock lock{mutex};
 		if (really_enabled && output->SupportsEnableDisable())
 			CommandWait(lock, Command::DISABLE);
 
@@ -79,7 +65,7 @@ AudioOutputControl::Steal() noexcept
 	StopThread();
 
 	/* now we can finally remove it */
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 	return std::exchange(output, nullptr);
 }
 
@@ -91,18 +77,12 @@ AudioOutputControl::ReplaceDummy(std::unique_ptr<FilteredAudioOutput> new_output
 	assert(new_output);
 
 	{
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		output = std::move(new_output);
 		enabled = _enabled;
 	}
 
 	client.ApplyEnabled();
-}
-
-const char *
-AudioOutputControl::GetName() const noexcept
-{
-	return name.c_str();
 }
 
 const char *
@@ -125,12 +105,12 @@ AudioOutputControl::GetMixer() const noexcept
 	return output ? output->mixer : nullptr;
 }
 
-std::map<std::string, std::string>
+std::map<std::string, std::string, std::less<>>
 AudioOutputControl::GetAttributes() const noexcept
 {
 	return output
 		? output->GetAttributes()
-		: std::map<std::string, std::string>{};
+		: std::map<std::string, std::string, std::less<>>{};
 }
 
 void
@@ -146,7 +126,7 @@ AudioOutputControl::SetAttribute(std::string &&attribute_name,
 bool
 AudioOutputControl::LockSetEnabled(bool new_value) noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	if (new_value == enabled)
 		return false;
@@ -158,7 +138,7 @@ AudioOutputControl::LockSetEnabled(bool new_value) noexcept
 bool
 AudioOutputControl::LockToggleEnabled() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 	return enabled = !enabled;
 }
 
@@ -188,7 +168,7 @@ AudioOutputControl::CommandWait(std::unique_lock<Mutex> &lock,
 void
 AudioOutputControl::LockCommandWait(Command cmd) noexcept
 {
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 	CommandWait(lock, cmd);
 }
 
@@ -196,6 +176,9 @@ void
 AudioOutputControl::EnableAsync()
 {
 	if (!output)
+		return;
+
+	if (always_off)
 		return;
 
 	if (!thread.IsDefined()) {
@@ -282,10 +265,10 @@ AudioOutputControl::Open(std::unique_lock<Mutex> &lock,
 	if (open2 && output->mixer != nullptr) {
 		const ScopeUnlock unlock(mutex);
 		try {
-			mixer_open(output->mixer);
+			output->mixer->LockOpen();
 		} catch (...) {
 			FmtError(output_domain,
-				 "Failed to open mixer for '{}': {}",
+				 "Failed to open mixer for {:?}: {}",
 				 GetName(), std::current_exception());
 		}
 	}
@@ -302,7 +285,7 @@ AudioOutputControl::CloseWait(std::unique_lock<Mutex> &lock) noexcept
 		return;
 
 	if (output->mixer != nullptr)
-		mixer_auto_close(output->mixer);
+		output->mixer->LockAutoClose();
 
 	assert(!open || !fail_timer.IsDefined());
 
@@ -317,7 +300,7 @@ AudioOutputControl::LockUpdate(const AudioFormat audio_format,
 			       const MusicPipe &mp,
 			       bool force) noexcept
 {
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 
 	if (enabled && really_enabled) {
 		if (force || !fail_timer.IsDefined() ||
@@ -342,14 +325,14 @@ AudioOutputControl::IsChunkConsumed(const MusicChunk &chunk) const noexcept
 bool
 AudioOutputControl::LockIsChunkConsumed(const MusicChunk &chunk) const noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 	return IsChunkConsumed(chunk);
 }
 
 void
 AudioOutputControl::LockPlay() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	assert(allow_play);
 
@@ -365,13 +348,13 @@ AudioOutputControl::LockPauseAsync() noexcept
 	if (output && output->mixer != nullptr && !output->SupportsPause())
 		/* the device has no pause mode: close the mixer,
 		   unless its "global" flag is set (checked by
-		   mixer_auto_close()) */
-		mixer_auto_close(output->mixer);
+		   Mixer::LockAutoClose()) */
+		output->mixer->LockAutoClose();
 
 	if (output)
 		output->Interrupt();
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	assert(allow_play);
 	if (IsOpen())
@@ -381,7 +364,7 @@ AudioOutputControl::LockPauseAsync() noexcept
 void
 AudioOutputControl::LockDrainAsync() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	assert(allow_play);
 	if (IsOpen())
@@ -394,7 +377,7 @@ AudioOutputControl::LockCancelAsync() noexcept
 	if (output)
 		output->Interrupt();
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	if (IsOpen()) {
 		allow_play = false;
@@ -405,7 +388,7 @@ AudioOutputControl::LockCancelAsync() noexcept
 void
 AudioOutputControl::LockAllowPlay() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	allow_play = true;
 	if (IsOpen())
@@ -424,10 +407,10 @@ AudioOutputControl::LockRelease() noexcept
 	    (!always_on || !output->SupportsPause()))
 		/* the device has no pause mode: close the mixer,
 		   unless its "global" flag is set (checked by
-		   mixer_auto_close()) */
-		mixer_auto_close(output->mixer);
+		   Mixer::LockAutoClose()) */
+		output->mixer->LockAutoClose();
 
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 
 	assert(!open || !fail_timer.IsDefined());
 	assert(allow_play);
@@ -446,7 +429,7 @@ AudioOutputControl::LockCloseWait() noexcept
 	if (output)
 		output->Interrupt();
 
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 	CloseWait(lock);
 }
 
@@ -457,7 +440,7 @@ AudioOutputControl::BeginDestroy() noexcept
 		if (output)
 			output->Interrupt();
 
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		if (!killed) {
 			killed = true;
 			CommandAsync(Command::KILL);

@@ -1,24 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Converter.hxx"
 #include "util/AllocatedString.hxx"
+#include "lib/fmt/ToBuffer.hxx"
 #include "config.h"
 
 #include <fmt/format.h>
@@ -29,16 +14,17 @@
 #include <string.h>
 
 #ifdef HAVE_ICU
+#include "Error.hxx"
 #include "Util.hxx"
 #include "util/AllocatedArray.hxx"
 #include <unicode/ucnv.h>
 #elif defined(HAVE_ICONV)
-#include "system/Error.hxx"
+#include "lib/fmt/SystemError.hxx"
 #endif
 
 #ifdef HAVE_ICU
 
-IcuConverter::~IcuConverter()
+IcuConverter::~IcuConverter() noexcept
 {
 	ucnv_close(converter);
 }
@@ -54,8 +40,9 @@ IcuConverter::Create(const char *charset)
 	UErrorCode code = U_ZERO_ERROR;
 	UConverter *converter = ucnv_open(charset, &code);
 	if (converter == nullptr)
-		throw std::runtime_error(fmt::format(FMT_STRING("Failed to initialize charset '{}': {}"),
-						     charset, u_errorName(code)));
+		throw ICU::MakeError(code,
+				     FmtBuffer<256>("Failed to initialize charset {:?}",
+						    charset));
 
 	return std::unique_ptr<IcuConverter>(new IcuConverter(converter));
 #elif defined(HAVE_ICONV)
@@ -67,8 +54,8 @@ IcuConverter::Create(const char *charset)
 			iconv_close(to);
 		if (from != (iconv_t)-1)
 			iconv_close(from);
-		throw MakeErrno(e, fmt::format(FMT_STRING("Failed to initialize charset '{}'"),
-					       charset).c_str());
+		throw FmtErrno(e, "Failed to initialize charset {:?}",
+			       charset);
 	}
 
 	return std::unique_ptr<IcuConverter>(new IcuConverter(to, from));
@@ -105,7 +92,7 @@ AllocatedString
 IcuConverter::ToUTF8(std::string_view s) const
 {
 #ifdef HAVE_ICU
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	ucnv_resetToUnicode(converter);
 
@@ -119,8 +106,7 @@ IcuConverter::ToUTF8(std::string_view s) const
 		       &source, source + s.size(),
 		       nullptr, true, &code);
 	if (code != U_ZERO_ERROR)
-		throw std::runtime_error(fmt::format(FMT_STRING("Failed to convert to Unicode: {}"),
-						     u_errorName(code)));
+		throw ICU::MakeError(code, "Failed to convert to Unicode");
 
 	const size_t target_length = target - buffer;
 	return UCharToUTF8({buffer, target_length});
@@ -133,7 +119,7 @@ AllocatedString
 IcuConverter::FromUTF8(std::string_view s) const
 {
 #ifdef HAVE_ICU
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	const auto u = UCharFromUTF8(s);
 
@@ -141,16 +127,15 @@ IcuConverter::FromUTF8(std::string_view s) const
 
 	// TODO: dynamic buffer?
 	char buffer[4096], *target = buffer;
-	const UChar *source = u.begin();
+	const UChar *source = u.data();
 	UErrorCode code = U_ZERO_ERROR;
 
 	ucnv_fromUnicode(converter, &target, buffer + std::size(buffer),
-			 &source, u.end(),
+			 &source, u.data() + u.size(),
 			 nullptr, true, &code);
 
 	if (code != U_ZERO_ERROR)
-		throw std::runtime_error(fmt::format(FMT_STRING("Failed to convert from Unicode: {}"),
-						     u_errorName(code)));
+		throw ICU::MakeError(code, "Failed to convert from Unicode");
 
 	return {{buffer, size_t(target - buffer)}};
 

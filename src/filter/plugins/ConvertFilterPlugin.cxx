@@ -1,28 +1,11 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ConvertFilterPlugin.hxx"
 #include "filter/Filter.hxx"
 #include "filter/Prepared.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "pcm/Convert.hxx"
-#include "util/ConstBuffer.hxx"
 
 #include <cassert>
 #include <memory>
@@ -50,12 +33,12 @@ public:
 			state->Reset();
 	}
 
-	ConstBuffer<void> FilterPCM(ConstBuffer<void> src) override;
+	std::span<const std::byte> FilterPCM(std::span<const std::byte> src) override;
 
-	ConstBuffer<void> Flush() override {
+	std::span<const std::byte> Flush() override {
 		return state
 			? state->Flush()
-			: nullptr;
+			: std::span<const std::byte>{};
 	}
 };
 
@@ -102,13 +85,13 @@ PreparedConvertFilter::Open(AudioFormat &audio_format)
 	return std::make_unique<ConvertFilter>(audio_format);
 }
 
-ConstBuffer<void>
-ConvertFilter::FilterPCM(ConstBuffer<void> src)
+std::span<const std::byte>
+ConvertFilter::FilterPCM(std::span<const std::byte> src)
 {
 	return state
 		? state->Convert(src)
 		/* optimized special case: no-op */
-		: src;
+		: std::span<const std::byte>{src};
 }
 
 std::unique_ptr<PreparedFilter>

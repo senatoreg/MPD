@@ -1,30 +1,13 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ModplugDecoderPlugin.hxx"
 #include "ModCommon.hxx"
 #include "../DecoderAPI.hxx"
 #include "input/InputStream.hxx"
 #include "tag/Handler.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "util/Domain.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/StringView.hxx"
 #include "Log.hxx"
 
 #ifdef _WIN32
@@ -57,14 +40,14 @@ modplug_decoder_init(const ConfigBlock &block)
 	} else if (strcmp(modplug_resampling_mode_value, "fir") == 0) {
 		modplug_resampling_mode = MODPLUG_RESAMPLE_FIR;
 	} else {
-		throw FormatRuntimeError("Invalid resampling mode in line %d: %s",
-				block.line, modplug_resampling_mode_value);
+		throw FmtRuntimeError("Invalid resampling mode in line {}: {}",
+				      block.line, modplug_resampling_mode_value);
 	}
 
 	modplug_loop_count = block.GetBlockValue("loop_count", 0);
 	if (modplug_loop_count < -1)
-		throw FormatRuntimeError("Invalid loop count in line %d: %i",
-					 block.line, modplug_loop_count);
+		throw FmtRuntimeError("Invalid loop count in line {}: {}",
+				      block.line, modplug_loop_count);
 
 	return true;
 }
@@ -73,7 +56,7 @@ static ModPlugFile *
 LoadModPlugFile(DecoderClient *client, InputStream &is)
 {
 	const auto buffer = mod_loadfile(&modplug_domain, client, is);
-	if (buffer.IsNull()) {
+	if (buffer == nullptr) {
 		LogWarning(modplug_domain, "could not load stream");
 		return nullptr;
 	}
@@ -117,9 +100,9 @@ mod_decode(DecoderClient &client, InputStream &is)
 		if (ret <= 0)
 			break;
 
-		cmd = client.SubmitData(nullptr,
-					audio_buffer, ret,
-					0);
+		cmd = client.SubmitAudio(nullptr,
+					 std::span{audio_buffer, std::size_t(ret)},
+					 0);
 
 		if (cmd == DecoderCommand::SEEK) {
 			ModPlug_Seek(f, client.GetSeekTime().ToMS());

@@ -2,6 +2,7 @@ storage_api = static_library(
   'storage_api',
   'StorageInterface.cxx',
   'StoragePlugin.cxx',
+  'MemoryDirectoryReader.cxx',
   include_directories: inc,
 )
 
@@ -15,12 +16,11 @@ storage_glue = static_library(
   'storage_glue',
   'Registry.cxx',
   'CompositeStorage.cxx',
-  'MemoryDirectoryReader.cxx',
   'Configured.cxx',
   include_directories: inc,
   dependencies: [
-    boost_dep,
     log_dep,
+    fs_glue_dep,
   ],
 )
 

@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Song.hxx"
 #include "ExportedSong.hxx"
@@ -28,11 +12,14 @@
 #include "time/ChronoUtil.hxx"
 #include "util/IterableSplitString.hxx"
 
+using std::string_view_literals::operator""sv;
+
 Song::Song(DetachedSong &&other, Directory &_parent) noexcept
 	:parent(_parent),
 	 filename(other.GetURI()),
 	 tag(std::move(other.WritableTag())),
 	 mtime(other.GetLastModified()),
+	 added(other.GetAdded()),
 	 start_time(other.GetStartTime()),
 	 end_time(other.GetEndTime()),
 	 audio_format(other.GetAudioFormat())
@@ -61,16 +48,16 @@ Song::GetURI() const noexcept
 /**
  * Path name traversal of a #Directory.
  */
-gcc_pure
+[[gnu::pure]]
 static const Directory *
-FindTargetDirectory(const Directory &base, StringView path) noexcept
+FindTargetDirectory(const Directory &base, std::string_view path) noexcept
 {
 	const auto *directory = &base;
-	for (const StringView name : IterableSplitString(path, '/')) {
-		if (name.empty() || name.Equals("."))
+	for (const std::string_view name : IterableSplitString(path, '/')) {
+		if (name.empty() || name == "."sv)
 			continue;
 
-		directory = name.Equals("..")
+		directory = name == ".."sv
 			? directory->parent
 			: directory->FindChild(name);
 		if (directory == nullptr)
@@ -83,14 +70,14 @@ FindTargetDirectory(const Directory &base, StringView path) noexcept
 /**
  * Path name traversal of a #Song.
  */
-gcc_pure
+[[gnu::pure]]
 static const Song *
-FindTargetSong(const Directory &_directory, StringView target) noexcept
+FindTargetSong(const Directory &_directory, std::string_view target) noexcept
 {
-	auto [path, last] = target.SplitLast('/');
-	if (last == nullptr) {
+	auto [path, last] = SplitLast(target, '/');
+	if (last.data() == nullptr) {
 		last = path;
-		path = nullptr;
+		path = {};
 	}
 
 	if (last.empty())
@@ -107,7 +94,7 @@ ExportedSong
 Song::Export() const noexcept
 {
 	const auto *target_song = !target.empty()
-		? FindTargetSong(parent, (std::string_view)target)
+		? FindTargetSong(parent, target)
 		: nullptr;
 
 	Tag merged_tag;
@@ -131,6 +118,9 @@ Song::Export() const noexcept
 	dest.mtime = IsNegative(mtime) && target_song != nullptr
 		? target_song->mtime
 		: mtime;
+	dest.added = IsNegative(added) && target_song != nullptr
+		? target_song->added
+		: added;
 	dest.start_time = start_time.IsZero() && target_song != nullptr
 		? target_song->start_time
 		: start_time;

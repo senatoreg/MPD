@@ -1,42 +1,28 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Handler.hxx"
 #include "Builder.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "util/CharUtil.hxx"
-#include "util/StringView.hxx"
+#include "util/StringCompare.hxx"
 
 #include <algorithm>
 
+using std::string_view_literals::operator""sv;
+
 void
-NullTagHandler::OnTag(TagType, StringView) noexcept
+NullTagHandler::OnTag(TagType, std::string_view) noexcept
 {
 }
 
 void
-NullTagHandler::OnPair(StringView, StringView) noexcept
+NullTagHandler::OnPair(std::string_view, std::string_view) noexcept
 {
 }
 
 void
-NullTagHandler::OnPicture(const char *, ConstBuffer<void>) noexcept
+NullTagHandler::OnPicture(const char *, std::span<const std::byte>) noexcept
 {
 }
 
@@ -54,18 +40,18 @@ AddTagHandler::OnDuration(SongTime duration) noexcept
 /**
  * Skip leading zeroes and a non-decimal suffix.
  */
-static StringView
-NormalizeDecimal(StringView s)
+static std::string_view
+NormalizeDecimal(std::string_view s)
 {
 	auto start = std::find_if(s.begin(), s.end(),
 				  [](char ch){ return ch != '0'; });
 	auto end = std::find_if(start, s.end(),
 				[](char ch){ return !IsDigitASCII(ch); });
-	return {start, end};
+	return std::string_view{start, std::size_t(std::distance(start, end))};
 }
 
 void
-AddTagHandler::OnTag(TagType type, StringView value) noexcept
+AddTagHandler::OnTag(TagType type, std::string_view value) noexcept
 {
 	if (type == TAG_TRACK || type == TAG_DISC) {
 		/* filter out this extra data and leading zeroes */
@@ -77,9 +63,9 @@ AddTagHandler::OnTag(TagType type, StringView value) noexcept
 }
 
 void
-FullTagHandler::OnPair(StringView name, StringView) noexcept
+FullTagHandler::OnPair(std::string_view name, std::string_view) noexcept
 {
-	if (name.EqualsIgnoreCase("cuesheet"))
+	if (StringIsEqualIgnoreCase(name, "cuesheet"sv))
 		tag.SetHasPlaylist(true);
 }
 

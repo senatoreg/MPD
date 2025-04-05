@@ -5,7 +5,6 @@ decoder_plugins_dependencies = []
 
 if get_option('dsd')
   decoder_plugins_sources += [
-    'HybridDsdDecoderPlugin.cxx',
     'DsdiffDecoderPlugin.cxx',
     'DsfDecoderPlugin.cxx',
     'DsdLib.cxx',
@@ -113,7 +112,6 @@ endif
 
 libopenmpt_dep = dependency('libopenmpt', required: get_option('openmpt'))
 decoder_features.set('ENABLE_OPENMPT', libopenmpt_dep.found())
-decoder_features.set('HAVE_LIBOPENMPT_VERSION_0_5', libopenmpt_dep.version().version_compare('>= 0.5'))
 if libopenmpt_dep.found()
   decoder_plugins_sources += [
     'OpenmptDecoderPlugin.cxx',
@@ -139,7 +137,7 @@ if libsndfile_dep.found()
   decoder_plugins_sources += 'SndfileDecoderPlugin.cxx'
 endif
 
-wavpack_dep = dependency('wavpack', required: get_option('wavpack'))
+wavpack_dep = dependency('wavpack', version: '>= 5', required: get_option('wavpack'))
 decoder_features.set('ENABLE_WAVPACK', wavpack_dep.found())
 if wavpack_dep.found()
   decoder_plugins_sources += 'WavpackDecoderPlugin.cxx'
@@ -160,27 +158,7 @@ if wildmidi_dep.found()
   decoder_plugins_sources += 'WildmidiDecoderPlugin.cxx'
 endif
 
-if not get_option('sidplay').disabled()
-  libsidplayfp_dep = dependency('libsidplayfp', version: '>= 1.8', required: false)
-  decoder_features.set('HAVE_SIDPLAYFP', libsidplayfp_dep.found())
-
-  if libsidplayfp_dep.found()
-    libsidplay_dep = libsidplayfp_dep
-  else
-    libsidplay2_dep = dependency('libsidplay2', required: false)
-    if libsidplay2_dep.found()
-      libsidutils_dep = dependency('libsidutils')
-      libresid_builder_dep = compiler.find_library('resid-builder')
-      libsidplay_dep = declare_dependency(dependencies: [libsidplay2_dep, libsidutils_dep, libresid_builder_dep])
-    elif get_option('sidplay').enabled()
-      error('Neither libsidplayfp nor libsidplay2 found')
-    else
-      libsidplay_dep = libsidplay2_dep
-    endif
-  endif
-else
-  libsidplay_dep = dependency('', required: false)
-endif
+libsidplay_dep = dependency('libsidplayfp', version: '>= 1.8', required: get_option('sidplay'))
 decoder_features.set('ENABLE_SIDPLAY', libsidplay_dep.found())
 if libsidplay_dep.found()
   decoder_plugins_sources += 'SidplayDecoderPlugin.cxx'

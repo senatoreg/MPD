@@ -6,13 +6,13 @@
 #include "playlist/PlaylistSong.hxx"
 #include "song/DetachedSong.hxx"
 #include "SongLoader.hxx"
-#include "client/Client.hxx"
+#include "client/IClient.hxx"
 #include "tag/Builder.hxx"
+#include "tag/Names.hxx"
 #include "tag/Tag.hxx"
 #include "util/Domain.hxx"
 #include "fs/AllocatedPath.hxx"
 #include "ls.hxx"
-#include "Log.hxx"
 #include "db/DatabaseSong.hxx"
 #include "storage/Registry.hxx"
 #include "storage/StorageInterface.hxx"
@@ -24,12 +24,6 @@
 
 #include <string.h>
 #include <stdio.h>
-
-void
-Log(LogLevel, const Domain &domain, const char *msg) noexcept
-{
-	fprintf(stderr, "[%s] %s\n", domain.GetName(), msg);
-}
 
 bool
 uri_supported_scheme(const char *uri) noexcept
@@ -114,26 +108,26 @@ DetachedSong::LoadFile(Path path)
 	return false;
 }
 
-const Database *
-Client::GetDatabase() const noexcept
-{
-	return reinterpret_cast<const Database *>(this);
-}
+class TestClient final : public IClient {
+public:
+	// virtual methods from class IClient
+	void AllowFile([[maybe_unused]] Path path_fs) const override {
+		/* always fail, so a SongLoader with a non-nullptr
+		   Client pointer will be regarded "insecure", while one with
+		   client==nullptr will allow all files */
+		throw std::runtime_error{"foo"};
+	}
 
-const Storage *
-Client::GetStorage() const noexcept
-{
-	return ::storage;
-}
+#ifdef ENABLE_DATABASE
+	const Database *GetDatabase() const noexcept override {
+		return reinterpret_cast<const Database *>(this);
+	}
 
-void
-Client::AllowFile([[maybe_unused]] Path path_fs) const
-{
-	/* always fail, so a SongLoader with a non-nullptr
-	   Client pointer will be regarded "insecure", while one with
-	   client==nullptr will allow all files */
-	throw std::runtime_error("foo");
-}
+	Storage *GetStorage() const noexcept override {
+		return ::storage;
+	}
+#endif // ENABLE_DATABASE
+};
 
 static std::string
 ToString(const Tag &tag)
@@ -207,7 +201,8 @@ TEST_F(TranslateSongTest, Insecure)
 {
 	/* illegal because secure=false */
 	DetachedSong song1 (uri1);
-	const SongLoader loader(*reinterpret_cast<const Client *>(1));
+	TestClient client;
+	const SongLoader loader{client};
 	EXPECT_FALSE(playlist_check_translate_song(song1, {},
 						   loader));
 }
@@ -249,8 +244,9 @@ TEST_F(TranslateSongTest, Relative)
 {
 	const Database &db = *reinterpret_cast<const Database *>(1);
 	const SongLoader secure_loader(&db, storage);
-	const SongLoader insecure_loader(*reinterpret_cast<const Client *>(1),
-					 &db, storage);
+
+	TestClient client;
+	const SongLoader insecure_loader{client, &db, storage};
 
 	/* map to music_directory */
 	DetachedSong song1("bar.ogg", MakeTag2b());

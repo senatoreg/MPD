@@ -29,10 +29,6 @@ if enable_fifo_output
   output_plugins_sources += 'FifoOutputPlugin.cxx'
 endif
 
-if is_haiku
-  output_plugins_sources += 'HaikuOutputPlugin.cxx'
-endif
-
 output_features.set('ENABLE_HTTPD_OUTPUT', get_option('httpd'))
 if get_option('httpd')
   output_plugins_sources += [
@@ -40,7 +36,7 @@ if get_option('httpd')
     'httpd/HttpdClient.cxx',
     'httpd/HttpdOutputPlugin.cxx',
   ]
-  output_plugins_deps += [ event_dep, net_dep, boost_dep ]
+  output_plugins_deps += [ event_dep, net_dep ]
   need_encoder = true
 endif
 
@@ -181,7 +177,6 @@ output_plugins = static_library(
     sles_dep,
     winmm_dep,
     wasapi_dep,
-    boost_dep,
     output_plugins_deps,
   ],
 )

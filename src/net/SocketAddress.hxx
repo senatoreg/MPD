@@ -1,38 +1,9 @@
-/*
- * Copyright 2012-2021 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
-#ifndef SOCKET_ADDRESS_HXX
-#define SOCKET_ADDRESS_HXX
+#pragma once
 
 #include "Features.hxx"
-
-#include <cstddef>
 
 #ifdef _WIN32
 #include <winsock2.h> // IWYU pragma: export
@@ -40,8 +11,17 @@
 #include <sys/socket.h> // IWYU pragma: export
 #endif
 
-template<typename T> struct ConstBuffer;
-struct StringView;
+#include <cstddef>
+#include <span>
+
+#if __cplusplus >= 202002 || (defined(__GNUC__) && __GNUC__ >= 10)
+#include <version>
+#endif
+
+#ifdef HAVE_UN
+#include <string_view>
+#endif
+
 class IPv4Address;
 
 /**
@@ -68,6 +48,10 @@ public:
 	constexpr SocketAddress(const struct sockaddr *_address,
 				size_type _size) noexcept
 		:address(_address), size(_size) {}
+
+	explicit SocketAddress(std::span<const std::byte> src) noexcept
+		:address((const struct sockaddr *)(const void *)src.data()),
+		 size(src.size()) {}
 
 	static constexpr SocketAddress Null() noexcept {
 		return nullptr;
@@ -110,6 +94,10 @@ public:
 		return GetFamily() != AF_UNSPEC;
 	}
 
+	constexpr bool IsInet() const noexcept {
+		return GetFamily() == AF_INET || GetFamily() == AF_INET6;
+	}
+
 #ifdef HAVE_UN
 	/**
 	 * Extract the local socket path (which may begin with a null
@@ -118,7 +106,7 @@ public:
 	 * nullptr if not applicable.
 	 */
 	[[gnu::pure]]
-	StringView GetLocalRaw() const noexcept;
+	std::string_view GetLocalRaw() const noexcept;
 
 	/**
 	 * Returns the local socket path or nullptr if not applicable
@@ -148,11 +136,26 @@ public:
 	IPv4Address UnmapV4() const noexcept;
 
 	/**
+	 * Does the address family support port numbers?
+	 */
+	constexpr bool HasPort() const noexcept {
+		return !IsNull() && IsInet();
+	}
+
+	/**
 	 * Extract the port number.  Returns 0 if not applicable.
 	 */
 	[[gnu::pure]]
 	unsigned GetPort() const noexcept;
 #endif
+
+	operator std::span<const std::byte>() const noexcept {
+		const void *q = reinterpret_cast<const void *>(address);
+		return {
+			(const std::byte *)q,
+			(std::size_t)size,
+		};
+	}
 
 	/**
 	 * Return a buffer pointing to the "steady" portion of the
@@ -162,14 +165,8 @@ public:
 	 * not supported.
 	 */
 	[[gnu::pure]]
-	ConstBuffer<void> GetSteadyPart() const noexcept;
+	std::span<const std::byte> GetSteadyPart() const noexcept;
 
 	[[gnu::pure]]
 	bool operator==(const SocketAddress other) const noexcept;
-
-	bool operator!=(const SocketAddress other) const noexcept {
-		return !(*this == other);
-	}
 };
-
-#endif

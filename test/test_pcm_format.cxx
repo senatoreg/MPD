@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "test_pcm_util.hxx"
 #include "pcm/PcmFormat.hxx"
@@ -34,7 +18,7 @@ TEST(PcmTest, Format8To16)
 
 	PcmDither dither;
 	auto d = pcm_convert_to_16(buffer, dither, SampleFormat::S8, src);
-	EXPECT_EQ(N, d.size);
+	EXPECT_EQ(N, d.size());
 
 	for (size_t i = 0; i < N; ++i)
 		EXPECT_EQ(int(src[i]), d[i] >> 8);
@@ -48,7 +32,7 @@ TEST(PcmTest, Format16To24)
 	PcmBuffer buffer;
 
 	auto d = pcm_convert_to_24(buffer, SampleFormat::S16, src);
-	EXPECT_EQ(N, d.size);
+	EXPECT_EQ(N, d.size());
 
 	for (size_t i = 0; i < N; ++i)
 		EXPECT_EQ(int(src[i]), d[i] >> 8);
@@ -62,7 +46,7 @@ TEST(PcmTest, Format16To32)
 	PcmBuffer buffer;
 
 	auto d = pcm_convert_to_32(buffer, SampleFormat::S16, src);
-	EXPECT_EQ(N, d.size);
+	EXPECT_EQ(N, d.size());
 
 	for (size_t i = 0; i < N; ++i)
 		EXPECT_EQ(int(src[i]), d[i] >> 16);
@@ -76,9 +60,9 @@ TEST(PcmTest, FormatFloat16)
 	PcmBuffer buffer1, buffer2;
 
 	auto f = pcm_convert_to_float(buffer1, SampleFormat::S16, src);
-	EXPECT_EQ(N, f.size);
+	EXPECT_EQ(N, f.size());
 
-	for (size_t i = 0; i != f.size; ++i) {
+	for (size_t i = 0; i != f.size(); ++i) {
 		EXPECT_GE(f[i], -1.f);
 		EXPECT_LE(f[i], 1.f);
 	}
@@ -87,14 +71,14 @@ TEST(PcmTest, FormatFloat16)
 
 	auto d = pcm_convert_to_16(buffer2, dither,
 				   SampleFormat::FLOAT,
-				   f.ToVoid());
-	EXPECT_EQ(N, d.size);
+				   std::as_bytes(f));
+	EXPECT_EQ(N, d.size());
 
 	for (size_t i = 0; i < N; ++i)
 		EXPECT_EQ(src[i], d[i]);
 
 	/* check if clamping works */
-	auto *writable = const_cast<float *>(f.data);
+	auto *writable = const_cast<float *>(f.data());
 	*writable++ = 1.01;
 	*writable++ = 10;
 	*writable++ = -1.01;
@@ -102,8 +86,8 @@ TEST(PcmTest, FormatFloat16)
 
 	d = pcm_convert_to_16(buffer2, dither,
 			      SampleFormat::FLOAT,
-			      f.ToVoid());
-	EXPECT_EQ(N, d.size);
+			      std::as_bytes(f));
+	EXPECT_EQ(N, d.size());
 
 	EXPECT_EQ(32767, int(d[0]));
 	EXPECT_EQ(32767, int(d[1]));
@@ -122,17 +106,17 @@ TEST(PcmTest, FormatFloat32)
 	PcmBuffer buffer1, buffer2;
 
 	auto f = pcm_convert_to_float(buffer1, SampleFormat::S32, src);
-	EXPECT_EQ(N, f.size);
+	EXPECT_EQ(N, f.size());
 
-	for (size_t i = 0; i != f.size; ++i) {
+	for (size_t i = 0; i != f.size(); ++i) {
 		EXPECT_GE(f[i], -1.f);
 		EXPECT_LE(f[i], 1.f);
 	}
 
 	auto d = pcm_convert_to_32(buffer2,
 				   SampleFormat::FLOAT,
-				   f.ToVoid());
-	EXPECT_EQ(N, d.size);
+				   std::as_bytes(f));
+	EXPECT_EQ(N, d.size());
 
 	constexpr int error = 64;
 
@@ -140,7 +124,7 @@ TEST(PcmTest, FormatFloat32)
 		EXPECT_NEAR(src[i], d[i], error);
 
 	/* check if clamping works */
-	auto *writable = const_cast<float *>(f.data);
+	auto *writable = const_cast<float *>(f.data());
 	*writable++ = 1.01;
 	*writable++ = 10;
 	*writable++ = -1.01;
@@ -148,8 +132,8 @@ TEST(PcmTest, FormatFloat32)
 
 	d = pcm_convert_to_32(buffer2,
 			      SampleFormat::FLOAT,
-			      f.ToVoid());
-	EXPECT_EQ(N, d.size);
+			      std::as_bytes(f));
+	EXPECT_EQ(N, d.size());
 
 	EXPECT_EQ(2147483647, int(d[0]));
 	EXPECT_EQ(2147483647, int(d[1]));

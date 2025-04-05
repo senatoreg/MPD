@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "FlacStreamMetadata.hxx"
 #include "FlacAudioFormat.hxx"
@@ -24,15 +8,16 @@
 #include "tag/Handler.hxx"
 #include "tag/Builder.hxx"
 #include "tag/Tag.hxx"
-#include "tag/ReplayGain.hxx"
 #include "tag/MixRampInfo.hxx"
 #include "tag/MixRampParser.hxx"
-#include "ReplayGainInfo.hxx"
-#include "util/StringView.hxx"
+#include "tag/ReplayGainInfo.hxx"
+#include "tag/ReplayGainParser.hxx"
 
 #include <cassert>
 
-static StringView
+using std::string_view_literals::operator""sv;
+
+static std::string_view
 ToStringView(const FLAC__StreamMetadata_VorbisComment_Entry &entry) noexcept
 {
 	return {(const char *)entry.entry, entry.length};
@@ -74,7 +59,7 @@ flac_scan_comments(const FLAC__StreamMetadata_VorbisComment *comment,
 		ScanVorbisComment(ToStringView(comment->comments[i]), handler);
 }
 
-gcc_pure
+[[gnu::pure]]
 static inline SongTime
 flac_duration(const FLAC__StreamMetadata_StreamInfo *stream_info) noexcept
 {
@@ -106,12 +91,12 @@ Scan(const FLAC__StreamMetadata_Picture &picture, TagHandler &handler) noexcept
 		return;
 
 	if (picture.mime_type != nullptr &&
-	    StringIsEqual(picture.mime_type, "-->"))
+	    "-->"sv == picture.mime_type)
 		/* this is a URL, not image data */
 		return;
 
 	handler.OnPicture(picture.mime_type,
-			  {picture.data, picture.data_length});
+			  std::as_bytes(std::span{picture.data, picture.data_length}));
 }
 
 void

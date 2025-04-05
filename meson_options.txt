@@ -1,6 +1,7 @@
 option('documentation', type: 'feature', description: 'Build documentation')
 option('html_manual', type: 'boolean', value: true, description: 'Build the HTML manual')
 option('manpages', type: 'boolean', value: true, description: 'Build manual pages')
+option('doxygen', type: 'boolean', value: false, description: 'Build doxygen source documentation')
 
 option('syslog', type: 'feature', description: 'syslog support')
 option('inotify', type: 'boolean', value: true, description: 'inotify support (for automatic database update)')
@@ -17,7 +18,8 @@ option('systemd_user_unit_dir', type: 'string', description: 'systemd user servi
 #
 
 option('test', type: 'boolean', value: false, description: 'Build the unit tests and debug programs')
-option('fuzzer', type: 'boolean', value: false, description: 'Build fuzzers (requires libFuzzer)')
+option('fuzzer', type: 'boolean', value: false, description: 'Build fuzzers')
+option('libfuzzer', type: 'boolean', value: true, description: 'Enable libFuzzer support for the fuzzers')
 
 #
 # Android

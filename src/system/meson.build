@@ -1,6 +1,5 @@
 system_sources = [
   'EventPipe.cxx',
-  'Clock.cxx',
 ]
 
 if host_machine.system() == 'linux'
@@ -12,12 +11,18 @@ if host_machine.system() == 'linux'
   ]
 endif
 
+if host_machine.system() == 'windows'
+  system_sources += [
+    'Clock.cxx',
+  ]
+endif
+
 system = static_library(
   'system',
   system_sources,
   include_directories: inc,
   dependencies: [
-    log_dep,
+    fmt_dep,
   ],
 )
 
@@ -30,7 +35,6 @@ endif
 system_dep = declare_dependency(
   link_with: system,
   dependencies: [
-    io_dep,
     winsock_dep,
   ],
 )

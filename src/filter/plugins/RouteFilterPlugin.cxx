@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 /** \file
  *
@@ -47,10 +31,8 @@
 #include "pcm/AudioFormat.hxx"
 #include "pcm/Buffer.hxx"
 #include "pcm/Silence.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "util/StringStrip.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/ConstBuffer.hxx"
-#include "util/WritableBuffer.hxx"
 
 #include <array>
 #include <cstdint>
@@ -95,7 +77,7 @@ public:
 		    const std::array<int8_t, MAX_CHANNELS> &_sources);
 
 	/* virtual methods from class Filter */
-	ConstBuffer<void> FilterPCM(ConstBuffer<void> src) override;
+	std::span<const std::byte> FilterPCM(std::span<const std::byte> src) override;
 };
 
 class PreparedRouteFilter final : public PreparedFilter {
@@ -161,8 +143,8 @@ PreparedRouteFilter::PreparedRouteFilter(const ConfigBlock &block)
 			throw std::runtime_error("Malformed 'routes' specification");
 
 		if (source >= MAX_CHANNELS)
-			throw FormatRuntimeError("Invalid source channel number: %u",
-						 source);
+			throw FmtRuntimeError("Invalid source channel number: {}",
+					      source);
 
 		if (source >= min_input_channels)
 			min_input_channels = source + 1;
@@ -175,8 +157,8 @@ PreparedRouteFilter::PreparedRouteFilter(const ConfigBlock &block)
 			throw std::runtime_error("Malformed 'routes' specification");
 
 		if (dest >= MAX_CHANNELS)
-			throw FormatRuntimeError("Invalid destination channel number: %u",
-						 dest);
+			throw FmtRuntimeError("Invalid destination channel number: {}",
+					      dest);
 
 		if (dest >= min_output_channels)
 			min_output_channels = dest + 1;
@@ -222,22 +204,22 @@ PreparedRouteFilter::Open(AudioFormat &audio_format)
 					     sources);
 }
 
-ConstBuffer<void>
-RouteFilter::FilterPCM(ConstBuffer<void> src)
+std::span<const std::byte>
+RouteFilter::FilterPCM(std::span<const std::byte> src)
 {
-	size_t number_of_frames = src.size / input_frame_size;
+	size_t number_of_frames = src.size() / input_frame_size;
 
 	const size_t bytes_per_frame_per_channel = input_format.GetSampleSize();
 
 	// A moving pointer that always refers to channel 0 in the input, at the currently handled frame
-	const auto *base_source = (const uint8_t *)src.data;
+	const auto *base_source = (const uint8_t *)src.data();
 
 	// Grow our reusable buffer, if needed, and set the moving pointer
 	const size_t result_size = number_of_frames * output_frame_size;
 	void *const result = output_buffer.Get(result_size);
 
 	// A moving pointer that always refers to the currently filled channel of the currently handled frame, in the output
-	auto *chan_destination = (uint8_t *)result;
+	auto *chan_destination = (std::byte *)result;
 
 	// Perform our copy operations, with N input channels and M output channels
 	for (unsigned int s=0; s<number_of_frames; ++s) {
@@ -269,7 +251,7 @@ RouteFilter::FilterPCM(ConstBuffer<void> src)
 	}
 
 	// Here it is, ladies and gentlemen! Rerouted data!
-	return { result, result_size };
+	return { (const std::byte *)result, result_size };
 }
 
 const FilterPlugin route_filter_plugin = {

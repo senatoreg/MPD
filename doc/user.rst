@@ -57,20 +57,20 @@ and unpack it (or `clone the git repository
 
 In any case, you need:
 
-* a C++17 compiler (e.g. GCC 8 or clang 7)
-* `Meson 0.56.0 <http://mesonbuild.com/>`__ and `Ninja
+* a C++20 compiler (e.g. GCC 12 or clang 14)
+* `Meson 1.0 <http://mesonbuild.com/>`__ and `Ninja
   <https://ninja-build.org/>`__
-* Boost 1.58
 * pkg-config 
 
 Each plugin usually needs a codec library, which you also need to
 install. Check the :doc:`plugins` for details about required libraries
 
-For example, the following installs a fairly complete list of build dependencies on Debian Bullseye:
+For example, the following installs a fairly complete list of build
+dependencies on Debian Bookworm:
 
 .. code-block:: none
 
-    apt install meson g++ \
+    apt install meson g++ pkgconf \
       libfmt-dev \
       libpcre2-dev \
       libmad0-dev libmpg123-dev libid3tag0-dev \
@@ -84,7 +84,7 @@ For example, the following installs a fairly complete list of build dependencies
       libsamplerate0-dev libsoxr-dev \
       libbz2-dev libcdio-paranoia-dev libiso9660-dev libmms-dev \
       libzzip-dev \
-      libcurl4-gnutls-dev libyajl-dev libexpat-dev \
+      libcurl4-gnutls-dev libyajl-dev libexpat1-dev \
       libasound2-dev libao-dev libjack-jackd2-dev libopenal-dev \
       libpulse-dev libshout3-dev \
       libsndio-dev \
@@ -95,17 +95,18 @@ For example, the following installs a fairly complete list of build dependencies
       libsqlite3-dev \
       libsystemd-dev \
       libgtest-dev \
-      libboost-dev \
       libicu-dev \
       libchromaprint-dev \
-      libgcrypt20-dev
+      libgcrypt20-dev \
+      libsystemd-dev \
+      libpipewire-0.3-dev
       
 
 Now configure the source tree:
 
 .. code-block:: none
 
- meson . output/release --buildtype=debugoptimized -Db_ndebug=true
+ meson setup . output/release --buildtype=debugoptimized -Db_ndebug=true
 
 The following command shows a list of compile-time options:
 
@@ -160,7 +161,7 @@ This section is about the latter.
 You need:
 
 * `mingw-w64 <http://mingw-w64.org/doku.php>`__
-* `Meson 0.56.0 <http://mesonbuild.com/>`__ and `Ninja
+* `Meson 1.0.0 <http://mesonbuild.com/>`__ and `Ninja
   <https://ninja-build.org/>`__
 * cmake
 * pkg-config
@@ -198,13 +199,16 @@ Compiling for Android
 
 You need:
 
-* Android SDK
-* `Android NDK r25b <https://developer.android.com/ndk/downloads>`_
-* `Meson 0.56.0 <http://mesonbuild.com/>`__ and `Ninja
+* Android SDK (sdk platform 34, build tools 34.0.0)
+* `Android NDK r27 <https://developer.android.com/ndk/downloads>`_
+* `Meson 1.0 <http://mesonbuild.com/>`__ and `Ninja
   <https://ninja-build.org/>`__
 * cmake
 * pkg-config
 * quilt
+* zip
+* libtool
+* python 3.9+
 
 Just like with the native build, unpack the :program:`MPD` source
 tarball and change into the directory.  Then, instead of
@@ -218,11 +222,17 @@ tarball and change into the directory.  Then, instead of
    --buildtype=debugoptimized -Db_ndebug=true \
    -Dwrap_mode=forcefallback \
    -Dandroid_debug_keystore=$HOME/.android/debug.keystore
- ninja android/apk/mpd-debug.apk
+ cd ../../android
+ ./gradlew assemble{ABI}Debug
+
+In the argument to `gradlew`, replace `{ABI}` with the build ABI or `Universal`.
+The `productFlavor` names defined in `build.android.kts` match the ABI.
+A universal apk (includes both arm64-v8a and x86_64)
+
 
 :envvar:`SDK_PATH` is the absolute path where you installed the
 Android SDK; :envvar:`NDK_PATH` is the Android NDK installation path;
-ABI is the Android ABI to be built, e.g. ":code:`arm64-v8a`".
+ABI is the Android ABI to be built, e.g. ":code:`x86`, `x86_64`, `armeabi`, `armeabi-v7a`, `arm64-v8a`".
 
 This downloads various library sources, and then configures and builds :program:`MPD`. 
 
@@ -238,9 +248,19 @@ Each line in the configuration file contains a setting name and its value, e.g.:
 
 :code:`connection_timeout "5"`
 
-For settings which specify a filesystem path, the tilde is expanded:
+Lines starting with ``#`` are treated as comments and ignored.
+
+For settings that specify a file system path, the tilde ('~') is expanded to $HOME. In addition, the following path expansions are supported:
+
+- `$HOME`
+- `$XDG_CONFIG_HOME`
+- `$XDG_MUSIC_DIR`
+- `$XDG_CACHE_HOME`
+- `$XDG_RUNTIME_DIR`
 
 :code:`music_directory "~/Music"`
+
+:code:`db_file "$XDG_CONFIG_HOME/mpd/database"`
 
 Some of the settings are grouped in blocks with curly braces, e.g. per-plugin settings:
 
@@ -299,11 +319,43 @@ configure this plugin, add a :code:`database` block to
 More information can be found in the :ref:`database_plugins`
 reference.
 
+
+Configuring Partitions
+----------------------
+
+:program:`MPD` can have multiple "partitions", that is, multiple
+independent players, each with their own queue and outputs.  All
+partitions share one database.  By default, there is only one
+partition called "default".  Additional partitions can be created in
+the configuration file with ``partition`` blocks or at runtime with
+the :ref:`newpartition <command_newpartition>` command.
+
+Example for specifying an additional partition in the configuration
+file:
+
+.. code-block:: none
+
+    partition {
+        name "foo"
+    }
+
+The following options are available in ``partition`` blocks:
+
+.. list-table::
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Name
+     - Description
+   * - **name**
+     - The name of the partition.
+
+
 Configuring neighbor plugins
 ----------------------------
 
 All neighbor plugins are disabled by default to avoid unwanted
-overhead. To enable (and configure) a plugin, add a :code:`neighbors`
+overhead. To enable (and configure) a plugin, add a :code:`neighbor`
 block to :file:`mpd.conf`:
 
 .. code-block:: none
@@ -342,6 +394,35 @@ The following table lists the input options valid for all plugins:
      - Allows you to disable a input plugin without recompiling. By default, all plugins are enabled.
 
 More information can be found in the :ref:`input_plugins` reference.
+
+Configuring archive plugins
+---------------------------
+
+To configure an archive plugin, add an :code:`archive_plugin` block to
+:file:`mpd.conf`:
+
+.. code-block:: none
+
+    archive_plugin {
+        name "zzip"
+        enabled "no"
+    }
+
+The following table lists the input options valid for all plugins:
+
+.. list-table::
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Name
+     - Description
+   * - **name**
+     - The name of the plugin
+   * - **enabled yes|no**
+     - Allows you to disable a plugin without recompiling.  By
+       default, all plugins are enabled.
+
+More information can be found in the :ref:`archive_plugins` reference.
 
 .. _input_cache:
 
@@ -457,7 +538,19 @@ The following table lists the audio_output options valid for all plugins:
    * - **tags yes|no**
      - If set to no, then :program:`MPD` will not send tags to this output. This is only useful for output plugins that can receive tags, for example the httpd output plugin.
    * - **always_on yes|no**
-     - If set to yes, then :program:`MPD` attempts to keep this audio output always open. This may be useful for streaming servers, when you don't want to disconnect all listeners even when playback is accidentally stopped.
+     - If set to yes, then :program:`MPD` attempts to keep this audio
+       output always open.  Instead of closing at the end
+       of playback, it puts the device in "pause" mode.  This works
+       only with output plugins that suport "pause" mode (see
+       :ref:`ALSA option "close_on_pause" <alsa_plugin>`).
+       This may be useful for streaming servers, when you don't want
+       to disconnect all listeners even when playback is accidentally
+       stopped.
+   * - **always_off yes|no**
+     - If set to yes, then :program:`MPD` never uses this audio output for
+       playback even if it's enabled. This can be used with the null output
+       plugin to create placeholder outputs for other software to react to
+       the enabled state without affecting playback.
    * - **mixer_type hardware|software|null|none**
      - Specifies which mixer should be used for this audio output: the
        hardware mixer (available for ALSA :ref:`alsa_plugin`, OSS
@@ -616,6 +709,11 @@ On songs without ReplayGain tags, the setting
 configured, then no ReplayGain is applied to such songs, and they will
 appear too loud.
 
+The setting ``replaygain_limit`` enables or disables ReplayGain
+limiting.  When enabled (the default), MPD will use the peak from the
+ReplayGain tags to minimize clipping; disabling it will allow clipping
+of some quiet tracks.
+
 ReplayGain is usually implemented with a software volume filter (which
 prevents `Bit-perfect playback`_).  To use a hardware mixer, set
 ``replay_gain_handler`` to ``mixer`` in the ``audio_output`` section
@@ -667,13 +765,16 @@ MPD enables MixRamp if:
   e.g.::
 
     mpc mixrampdb -17
-- both songs have MixRamp tags
+- both songs have MixRamp tags (or ``mixramp_analyzer`` is enabled)
 - both songs have the same audio format (or :ref:`audio_output_format`
   is configured)
 
 The `MixRamp <http://sourceforge.net/projects/mixramp>`__ tool can be
-used to add MixRamp tags to your song files.
+used to add MixRamp tags to your song files.  To analyze songs
+on-the-fly, you can enable the ``mixramp_analyzer`` option in
+:file:`mpd.conf`::
 
+ mixramp_analyzer "yes"
 
 
 Client Connections
@@ -702,12 +803,16 @@ brackets if you want to configure a port::
 
  bind_to_address "[::1]:6602"
 
+To reset the previous assignments just set an empty value:
+
+ bind_to_address
+
 To bind to a local socket (UNIX domain socket), specify an absolute
 path or a path starting with a tilde (~).  Some clients default to
-connecting to :file:`/var/run/mpd/socket` so this may be a good
+connecting to :file:`/run/mpd/socket` so this may be a good
 choice::
 
- bind_to_address "/var/run/mpd/socket"
+ bind_to_address "/run/mpd/socket"
 
 On Linux, local sockets can be bound to a name without a socket inode
 on the filesystem; MPD implements this by prepending ``@`` to the
@@ -937,11 +1042,15 @@ Or you can use the :command:`prlimit` program from the util-linux package:
 
 The systemd service file shipped with :program:`MPD` comes with this setting.
 
-This works only if the Linux kernel was compiled with :makevar:`CONFIG_RT_GROUP_SCHED` disabled. Use the following command to check this option for your current kernel:
+This works only if the Linux kernel was compiled with :makevar:`CONFIG_RT_GROUP_SCHED` disabled. Use the following command(s) to check this option for your current kernel:
 
-.. code-block:: none
+.. code-block:: sh
 
     zgrep ^CONFIG_RT_GROUP_SCHED /proc/config.gz
+    # OR
+    grep ^CONFIG_RT_GROUP_SCHED /boot/config
+    # OR
+    grep ^CONFIG_RT_GROUP_SCHED /boot/config-$(uname -r)
 
 You can verify whether the real-time scheduler is active with the ps command:
 
@@ -1109,8 +1218,11 @@ Mounting is only possible with the simple database plugin and a :code:`cache_dir
 
     database {
       plugin "simple"
-      path "~/.mpd/db"
-      cache_directory "~/.mpd/cache"
+      path "$XDG_CACHE_HOME/mpd/database"
+      cache_directory "$XDG_CACHE_HOME/mpd/"
+      # or you can also use relative or absolute paths
+      # path "~/.mpd/db"
+      # cache_directory "~/.mpd/cache"
     }
         
 This requires migrating from the old :code:`db_file` setting to a database section. The cache directory must exist, and :program:`MPD` will put one file per mount there, which will be reused when the same storage is used again later.
@@ -1295,6 +1407,10 @@ from io_uring's advantages.
 * "Cannot allocate memory" usually means that your memlock limit
   (``ulimit -l`` in bash or ``LimitMEMLOCK`` in systemd) is too low.
   64 MB is a reasonable value for this limit.
+* "Permission denied" on a system with SELinux enabled may mean
+  that MPD is restricted from using the io_uring facility. You
+  should also see an AVC denial reported by SELinux. A policy
+  adjustment will be necessary to give MPD access to io_uring.
 * Your Linux kernel might be too old and does not support io_uring.
 
 Error "bind to '0.0.0.0:6600' failed (continuing anyway, because binding to '[::]:6600' succeeded)"

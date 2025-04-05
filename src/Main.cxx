@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "Main.hxx"
@@ -32,8 +16,7 @@
 #include "command/AllCommands.hxx"
 #include "Partition.hxx"
 #include "tag/Config.hxx"
-#include "ReplayGainGlobal.hxx"
-#include "IdleFlags.hxx"
+#include "protocol/IdleFlags.hxx"
 #include "Log.hxx"
 #include "LogInit.hxx"
 #include "input/Init.hxx"
@@ -46,7 +29,6 @@
 #include "playlist/PlaylistRegistry.hxx"
 #include "zeroconf/Glue.hxx"
 #include "decoder/DecoderList.hxx"
-#include "pcm/AudioParser.hxx"
 #include "pcm/Convert.hxx"
 #include "unix/SignalHandlers.hxx"
 #include "thread/Slack.hxx"
@@ -60,7 +42,7 @@
 #include "config/Option.hxx"
 #include "config/Domain.hxx"
 #include "config/Parser.hxx"
-#include "util/RuntimeError.hxx"
+#include "config/PartitionConfig.hxx"
 #include "util/ScopeExit.hxx"
 
 #ifdef ENABLE_DAEMON
@@ -116,28 +98,12 @@
 #include <clocale>
 #endif
 
-static constexpr size_t KILOBYTE = 1024;
-static constexpr size_t MEGABYTE = 1024 * KILOBYTE;
-
-static constexpr size_t DEFAULT_BUFFER_SIZE = 4 * MEGABYTE;
-
-static constexpr
-size_t MIN_BUFFER_SIZE = std::max(CHUNK_SIZE * 32,
-				  64 * KILOBYTE);
-
 #ifdef ANDROID
 Context *context;
 LogListener *logListener;
 #endif
 
 Instance *global_instance;
-
-struct Config {
-	ReplayGainConfig replay_gain;
-
-	explicit Config(const ConfigData &raw)
-		:replay_gain(LoadReplayGainConfig(raw)) {}
-};
 
 #ifdef ENABLE_DAEMON
 
@@ -293,53 +259,11 @@ glue_state_file_init(Instance &instance, const ConfigData &raw_config)
 static void
 initialize_decoder_and_player(Instance &instance,
 			      const ConfigData &config,
-			      const ReplayGainConfig &replay_gain_config)
+			      const PartitionConfig &partition_config)
 {
-	const ConfigParam *param;
-
-	size_t buffer_size;
-	param = config.GetParam(ConfigOption::AUDIO_BUFFER_SIZE);
-	if (param != nullptr) {
-		buffer_size = param->With([](const char *s){
-			size_t result = ParseSize(s, KILOBYTE);
-			if (result <= 0)
-				throw FormatRuntimeError("buffer size \"%s\" is not a "
-							 "positive integer", s);
-
-			if (result < MIN_BUFFER_SIZE) {
-				FmtWarning(config_domain, "buffer size {} is too small, using {} bytes instead",
-					   result, MIN_BUFFER_SIZE);
-				result = MIN_BUFFER_SIZE;
-			}
-
-			return result;
-		});
-	} else
-		buffer_size = DEFAULT_BUFFER_SIZE;
-
-	const unsigned buffered_chunks = buffer_size / CHUNK_SIZE;
-
-	if (buffered_chunks >= 1 << 15)
-		throw FormatRuntimeError("buffer size \"%lu\" is too big",
-					 (unsigned long)buffer_size);
-
-	const unsigned max_length =
-		config.GetPositive(ConfigOption::MAX_PLAYLIST_LENGTH,
-				   DEFAULT_PLAYLIST_MAX_LENGTH);
-
-	AudioFormat configured_audio_format = config.With(ConfigOption::AUDIO_OUTPUT_FORMAT, [](const char *s){
-		if (s == nullptr)
-			return AudioFormat::Undefined();
-
-		return ParseAudioFormat(s, true);
-	});
-
 	instance.partitions.emplace_back(instance,
 					 "default",
-					 max_length,
-					 buffered_chunks,
-					 configured_audio_format,
-					 replay_gain_config);
+					 partition_config);
 	auto &partition = instance.partitions.back();
 
 	partition.replay_gain_mode = config.With(ConfigOption::REPLAYGAIN, [](const char *s){
@@ -392,7 +316,7 @@ MainConfigured(const CommandLineOptions &options,
 #endif
 
 	InitPathParser(raw_config);
-	const Config config(raw_config);
+	const PartitionConfig partition_config{raw_config};
 
 #ifdef ENABLE_DAEMON
 	glue_daemonize_init(options, raw_config);
@@ -426,7 +350,7 @@ MainConfigured(const CommandLineOptions &options,
 	}
 
 	initialize_decoder_and_player(instance,
-				      raw_config, config.replay_gain);
+				      raw_config, partition_config);
 
 	listen_global_init(raw_config, *instance.partitions.front().listener);
 
@@ -444,7 +368,7 @@ MainConfigured(const CommandLineOptions &options,
 	initPermissions(raw_config);
 	spl_global_init(raw_config);
 #ifdef ENABLE_ARCHIVE
-	const ScopeArchivePluginsInit archive_plugins_init;
+	const ScopeArchivePluginsInit archive_plugins_init{raw_config};
 #endif
 
 	pcm_convert_global_init(raw_config);
@@ -465,9 +389,18 @@ MainConfigured(const CommandLineOptions &options,
 		partition.outputs.Configure(instance.io_thread.GetEventLoop(),
 					    instance.rtio_thread.GetEventLoop(),
 					    raw_config,
-					    config.replay_gain);
+					    partition_config.player.replay_gain);
 		partition.UpdateEffectiveReplayGainMode();
 	}
+
+	raw_config.WithEach(ConfigBlockOption::PARTITION, [&](const auto &block){
+		const char *name = block.GetBlockValue("name");
+		if (name == nullptr)
+			throw std::runtime_error("Missing 'name'");
+
+		instance.partitions.emplace_back(instance, name,
+						 partition_config);
+	});
 
 	client_manager_init(raw_config);
 	const ScopeInputPluginsInit input_plugins_init(raw_config,
@@ -669,7 +602,7 @@ JNIEXPORT void JNICALL
 Java_org_musicpd_Bridge_shutdown(JNIEnv *, jclass)
 {
 	if (global_instance != nullptr)
-		global_instance->Break();
+		global_instance->event_loop.InjectBreak();
 }
 
 gcc_visibility_default
@@ -681,6 +614,42 @@ Java_org_musicpd_Bridge_pause(JNIEnv *, jclass)
 			partition.pc.LockSetPause(true);
 }
 
+gcc_visibility_default
+JNIEXPORT void JNICALL
+Java_org_musicpd_Bridge_playPause(JNIEnv *, jclass)
+{
+	if (global_instance != nullptr)
+		for (auto &partition : global_instance->partitions)
+			partition.pc.LockPause();
+
+}
+
+gcc_visibility_default
+JNIEXPORT void JNICALL
+Java_org_musicpd_Bridge_playNext(JNIEnv *, jclass)
+{
+	if (global_instance != nullptr)
+		BlockingCall(global_instance->event_loop, [&](){
+			for (auto &partition : global_instance->partitions)
+				if (partition.playlist.playing) {
+					partition.PlayNext();
+				}
+		});
+}
+
+gcc_visibility_default
+JNIEXPORT void JNICALL
+Java_org_musicpd_Bridge_playPrevious(JNIEnv *, jclass)
+{
+	if (global_instance != nullptr)
+		BlockingCall(global_instance->event_loop, [&](){
+			for (auto &partition : global_instance->partitions)
+				if (partition.playlist.playing) {
+					partition.PlayPrevious();
+				}
+		});
+}
+
 #else
 
 static inline void
@@ -690,6 +659,20 @@ MainOrThrow(int argc, char *argv[])
 	ConfigData raw_config;
 
 	ParseCommandLine(argc, argv, options, raw_config);
+
+#if defined(ENABLE_DAEMON) && defined(__APPLE__)
+	if (options.daemon) {
+		// Fork before any Objective-C runtime initializations
+		pid_t pid = fork();
+		if (pid < 0)
+			throw MakeErrno("fork() failed");
+
+		if (pid > 0) {
+			// Parent process: exit immediately
+			_exit(0);
+		}
+	}
+#endif
 
 	MainConfigured(options, raw_config);
 }

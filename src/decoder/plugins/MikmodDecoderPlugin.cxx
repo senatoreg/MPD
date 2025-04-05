@@ -1,31 +1,15 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "MikmodDecoderPlugin.hxx"
 #include "../DecoderAPI.hxx"
 #include "lib/fmt/PathFormatter.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "tag/Handler.hxx"
+#include "fs/NarrowPath.hxx"
 #include "fs/Path.hxx"
 #include "util/Domain.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/StringView.hxx"
 #include "Log.hxx"
 #include "Version.h"
 
@@ -112,8 +96,8 @@ mikmod_decoder_init(const ConfigBlock &block)
 	mikmod_loop = block.GetBlockValue("loop", false);
 	mikmod_sample_rate = block.GetPositiveValue("sample_rate", 44100U);
 	if (!audio_valid_sample_rate(mikmod_sample_rate))
-		throw FormatRuntimeError("Invalid sample rate in line %d: %u",
-					 block.line, mikmod_sample_rate);
+		throw FmtRuntimeError("Invalid sample rate in line {}: {}",
+				      block.line, mikmod_sample_rate);
 
 	md_device = 0;
 	md_reverb = 0;
@@ -145,9 +129,10 @@ mikmod_decoder_finish() noexcept
 static void
 mikmod_decoder_file_decode(DecoderClient &client, Path path_fs)
 {
+	auto np = NarrowPath(path_fs);
 	/* deconstify the path because libmikmod wants a non-const
 	   string pointer */
-	char *const path2 = const_cast<char *>(path_fs.c_str());
+	const auto path2 = const_cast<char *>(np.c_str());
 
 	MODULE *handle;
 	int ret;
@@ -172,7 +157,9 @@ mikmod_decoder_file_decode(DecoderClient &client, Path path_fs)
 	DecoderCommand cmd = DecoderCommand::NONE;
 	while (cmd == DecoderCommand::NONE && Player_Active()) {
 		ret = VC_WriteBytes(buffer, sizeof(buffer));
-		cmd = client.SubmitData(nullptr, buffer, ret, 0);
+		cmd = client.SubmitAudio(nullptr,
+					 std::span{buffer, std::size_t(ret)},
+					 0);
 	}
 
 	Player_Stop();
@@ -182,9 +169,10 @@ mikmod_decoder_file_decode(DecoderClient &client, Path path_fs)
 static bool
 mikmod_decoder_scan_file(Path path_fs, TagHandler &handler) noexcept
 {
+	auto np = NarrowPath(path_fs);
 	/* deconstify the path because libmikmod wants a non-const
 	   string pointer */
-	char *const path2 = const_cast<char *>(path_fs.c_str());
+	const auto path2 = const_cast<char *>(np.c_str());
 
 	MODULE *handle = Player_Load(path2, 128, 0);
 

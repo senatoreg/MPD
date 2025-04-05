@@ -1,31 +1,17 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_TAG_HANDLER_HXX
 #define MPD_TAG_HANDLER_HXX
 
-#include "Type.h"
 #include "Chrono.hxx"
-#include "util/Compiler.h"
 
-template<typename T> struct ConstBuffer;
-struct StringView;
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string_view>
+
+enum TagType : uint8_t;
 struct AudioFormat;
 class TagBuilder;
 
@@ -81,13 +67,14 @@ public:
 	 * @param the value of the tag; the pointer will become
 	 * invalid after returning
 	 */
-	virtual void OnTag(TagType type, StringView value) noexcept = 0;
+	virtual void OnTag(TagType type, std::string_view value) noexcept = 0;
 
 	/**
 	 * A name-value pair has been read.  It is the codec specific
 	 * representation of tags.
 	 */
-	virtual void OnPair(StringView key, StringView value) noexcept = 0;
+	virtual void OnPair(std::string_view key,
+			    std::string_view value) noexcept = 0;
 
 	/**
 	 * Declare the audio format of a song.
@@ -116,7 +103,7 @@ public:
 	 * invalidated after this method returns
 	 */
 	virtual void OnPicture(const char *mime_type,
-			       ConstBuffer<void> buffer) noexcept = 0;
+			       std::span<const std::byte> buffer) noexcept = 0;
 };
 
 class NullTagHandler : public TagHandler {
@@ -125,11 +112,12 @@ public:
 		:TagHandler(_want_mask) {}
 
 	void OnDuration([[maybe_unused]] SongTime duration) noexcept override {}
-	void OnTag(TagType type, StringView value) noexcept override;
-	void OnPair(StringView key, StringView value) noexcept override;
+	void OnTag(TagType type, std::string_view value) noexcept override;
+	void OnPair(std::string_view key,
+		    std::string_view value) noexcept override;
 	void OnAudioFormat(AudioFormat af) noexcept override;
 	void OnPicture(const char *mime_type,
-		       ConstBuffer<void> buffer) noexcept override;
+		       std::span<const std::byte> buffer) noexcept override;
 };
 
 /**
@@ -149,7 +137,7 @@ public:
 		:AddTagHandler(0, _builder) {}
 
 	void OnDuration(SongTime duration) noexcept override;
-	void OnTag(TagType type, StringView value) noexcept override;
+	void OnTag(TagType type, std::string_view value) noexcept override;
 };
 
 /**
@@ -173,7 +161,8 @@ public:
 				AudioFormat *_audio_format=nullptr) noexcept
 		:FullTagHandler(0, _builder, _audio_format) {}
 
-	void OnPair(StringView key, StringView value) noexcept override;
+	void OnPair(std::string_view key,
+		    std::string_view value) noexcept override;
 	void OnAudioFormat(AudioFormat af) noexcept override;
 };
 

@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "QobuzLoginRequest.hxx"
 #include "QobuzErrorParser.hxx"
@@ -24,6 +8,8 @@
 #include "lib/yajl/Callbacks.hxx"
 
 #include <cassert>
+
+using std::string_view_literals::operator""sv;
 
 using Wrapper = Yajl::CallbacksWrapper<QobuzLoginRequest::ResponseParser>;
 static constexpr yajl_callbacks parse_callbacks = {
@@ -59,9 +45,9 @@ public:
 	QobuzSession &&GetSession();
 
 	/* yajl callbacks */
-	bool String(StringView value) noexcept;
+	bool String(std::string_view value) noexcept;
 	bool StartMap() noexcept;
-	bool MapKey(StringView value) noexcept;
+	bool MapKey(std::string_view value) noexcept;
 	bool EndMap() noexcept;
 };
 
@@ -123,9 +109,9 @@ QobuzLoginRequest::QobuzLoginRequest(CurlGlobal &curl,
 	:request(curl, *this),
 	 handler(_handler)
 {
-	request.SetUrl(MakeLoginUrl(request.Get(), base_url, app_id,
-				    username, email, password,
-				    device_manufacturer_id).c_str());
+	request.GetEasy().SetURL(MakeLoginUrl(request.Get(), base_url, app_id,
+					      username, email, password,
+					      device_manufacturer_id).c_str());
 }
 
 QobuzLoginRequest::~QobuzLoginRequest() noexcept
@@ -161,7 +147,7 @@ QobuzLoginRequest::OnError(std::exception_ptr e) noexcept
 }
 
 inline bool
-QobuzLoginRequest::ResponseParser::String(StringView value) noexcept
+QobuzLoginRequest::ResponseParser::String(std::string_view value) noexcept
 {
 	switch (state) {
 	case State::NONE:
@@ -169,11 +155,11 @@ QobuzLoginRequest::ResponseParser::String(StringView value) noexcept
 		break;
 
 	case State::DEVICE_ID:
-		session.device_id.assign(value.data, value.size);
+		session.device_id = value;
 		break;
 
 	case State::USER_AUTH_TOKEN:
-		session.user_auth_token.assign(value.data, value.size);
+		session.user_auth_token = value;
 		break;
 	}
 
@@ -200,13 +186,13 @@ QobuzLoginRequest::ResponseParser::StartMap() noexcept
 }
 
 inline bool
-QobuzLoginRequest::ResponseParser::MapKey(StringView value) noexcept
+QobuzLoginRequest::ResponseParser::MapKey(std::string_view value) noexcept
 {
 	switch (state) {
 	case State::NONE:
-		if (value.Equals("user_auth_token"))
+		if (value == "user_auth_token"sv)
 			state = State::USER_AUTH_TOKEN;
-		else if (value.Equals("device")) {
+		else if (value == "device"sv) {
 			state = State::DEVICE;
 			map_depth = 0;
 		}
@@ -214,7 +200,7 @@ QobuzLoginRequest::ResponseParser::MapKey(StringView value) noexcept
 		break;
 
 	case State::DEVICE:
-		if (value.Equals("id"))
+		if (value == "id"sv)
 			state = State::DEVICE_ID;
 		break;
 

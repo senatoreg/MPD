@@ -1,6 +1,8 @@
 uring_features = configuration_data()
 
-if host_machine.system() != 'linux'
+if host_machine.system() != 'linux' or is_android
+  # io_uring is a Linux-only feature; on Android, we also disable it
+  # because it's forbidden by a seccomp filter
   uring_dep = dependency('', required: false)
   uring_features.set('HAVE_URING', false)
   configure_file(output: 'Features.h', configuration: uring_features)
@@ -23,6 +25,7 @@ uring = static_library(
   'Ring.cxx',
   'Queue.cxx',
   'Operation.cxx',
+  'Close.cxx',
   'ReadOperation.cxx',
   include_directories: inc,
   dependencies: [

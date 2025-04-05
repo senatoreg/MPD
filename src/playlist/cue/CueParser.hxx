@@ -1,33 +1,15 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_CUE_PARSER_HXX
 #define MPD_CUE_PARSER_HXX
 
 #include "song/DetachedSong.hxx"
 #include "tag/Builder.hxx"
-#include "util/Compiler.h"
 
-#include <string>
 #include <memory>
-
-struct StringView;
+#include <string>
+#include <string_view>
 
 class CueParser {
 	enum {
@@ -106,7 +88,7 @@ public:
 	 * Feed a text line from the CUE file into the parser.  Call
 	 * Get() after this to see if a song has been finished.
 	 */
-	void Feed(StringView line) noexcept;
+	void Feed(std::string_view line) noexcept;
 
 	/**
 	 * Tell the parser that the end of the file has been reached.  Call
@@ -125,7 +107,7 @@ public:
 	std::unique_ptr<DetachedSong> Get() noexcept;
 
 private:
-	gcc_pure
+	[[gnu::pure]]
 	TagBuilder *GetCurrentTag() noexcept;
 
 	/**

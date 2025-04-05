@@ -1,47 +1,21 @@
-/*
- * Copyright 2014-2019 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
-#ifndef BUFFERED_READER_HXX
-#define BUFFERED_READER_HXX
+#pragma once
 
 #include "util/DynamicFifoBuffer.hxx"
 
 #include <cstddef>
+#include <span>
 
 class Reader;
 
 class BufferedReader {
-	static constexpr size_t MAX_SIZE = 512 * 1024;
+	static constexpr std::size_t MAX_SIZE = 512 * 1024;
 
 	Reader &reader;
 
-	DynamicFifoBuffer<char> buffer;
+	DynamicFifoBuffer<std::byte> buffer;
 
 	bool eof = false;
 
@@ -64,8 +38,8 @@ public:
 	bool Fill(bool need_more);
 
 	[[gnu::pure]]
-	WritableBuffer<void> Read() const noexcept {
-		return buffer.Read().ToVoid();
+	std::span<std::byte> Read() const noexcept {
+		return std::as_writable_bytes(buffer.Read());
 	}
 
 	/**
@@ -73,9 +47,9 @@ public:
 	 * it).  Throws std::runtime_error if not enough data is
 	 * available.
 	 */
-	void *ReadFull(size_t size);
+	void *ReadFull(std::size_t size);
 
-	void Consume(size_t n) noexcept {
+	void Consume(std::size_t n) noexcept {
 		buffer.Consume(n);
 	}
 
@@ -83,14 +57,26 @@ public:
 	 * Read (and consume) data from the input buffer into the
 	 * given buffer.  Does not attempt to refill the buffer.
 	 */
-	size_t ReadFromBuffer(WritableBuffer<void> dest) noexcept;
+	std::size_t ReadFromBuffer(std::span<std::byte> dest) noexcept;
 
 	/**
 	 * Read data into the given buffer and consume it from our
 	 * buffer.  Throw an exception if the request cannot be
 	 * forfilled.
 	 */
-	void ReadFull(WritableBuffer<void> dest);
+	void ReadFull(std::span<std::byte> dest);
+
+	template<typename T>
+	void ReadFullT(T &dest) {
+		ReadFull(std::as_writable_bytes(std::span{&dest, 1}));
+	}
+
+	template<typename T>
+	T ReadFullT() {
+		T dest;
+		ReadFullT<T>(dest);
+		return dest;
+	}
 
 	char *ReadLine();
 
@@ -98,5 +84,3 @@ public:
 		return line_number;
 	}
 };
-
-#endif

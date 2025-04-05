@@ -1,37 +1,12 @@
-/*
- * Copyright 2012-2021 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
 #include "SocketAddress.hxx"
+
+#ifdef HAVE_TCP
 #include "IPv4Address.hxx"
 #include "IPv6Address.hxx"
-#include "util/ConstBuffer.hxx"
-#include "util/StringView.hxx"
+#endif
 
 #include <cassert>
 #include <cstring>
@@ -56,12 +31,12 @@ SocketAddress::operator==(SocketAddress other) const noexcept
 
 #ifdef HAVE_UN
 
-StringView
+std::string_view
 SocketAddress::GetLocalRaw() const noexcept
 {
 	if (IsNull() || GetFamily() != AF_LOCAL)
 		/* not applicable */
-		return nullptr;
+		return {};
 
 	const auto *sun = &CastTo<struct sockaddr_un>();
 	const auto start = (const char *)sun;
@@ -69,7 +44,7 @@ SocketAddress::GetLocalRaw() const noexcept
 	const size_t header_size = path - start;
 	if (size < size_type(header_size))
 		/* malformed address */
-		return nullptr;
+		return {};
 
 	return {path, size - header_size};
 }
@@ -81,11 +56,10 @@ SocketAddress::GetLocalPath() const noexcept
 	return !raw.empty() &&
 		/* must be an absolute path */
 		raw.front() == '/' &&
-		/* must be null-terminated */
-		raw.back() == 0 &&
-		/* there must not be any other null byte */
-		std::memchr(raw.data, 0, raw.size - 1) == nullptr
-		? raw.data
+		/* must be null-terminated and there must not be any
+		   other null byte */
+		raw.find('\0') == raw.size() - 1
+		? raw.data()
 		: nullptr;
 }
 
@@ -131,30 +105,36 @@ SocketAddress::GetPort() const noexcept
 	}
 }
 
-static constexpr ConstBuffer<void>
+static std::span<const std::byte>
 GetSteadyPart(const struct sockaddr_in &address) noexcept
 {
-	return {&address.sin_addr, sizeof(address.sin_addr)};
+	return {
+		reinterpret_cast<const std::byte *>(&address.sin_addr),
+		sizeof(address.sin_addr),
+	};
 }
 
-static constexpr ConstBuffer<void>
+static std::span<const std::byte>
 GetSteadyPart(const struct sockaddr_in6 &address) noexcept
 {
-	return {&address.sin6_addr, sizeof(address.sin6_addr)};
+	return {
+		reinterpret_cast<const std::byte *>(&address.sin6_addr),
+		sizeof(address.sin6_addr),
+	};
 }
 
-#endif
+#endif // HAVE_TCP
 
-ConstBuffer<void>
+std::span<const std::byte>
 SocketAddress::GetSteadyPart() const noexcept
 {
 	if (IsNull())
-		return nullptr;
+		return {};
 
 	switch (GetFamily()) {
 #ifdef HAVE_UN
 	case AF_LOCAL:
-		return GetLocalRaw().ToVoid();
+		return std::as_bytes(std::span<const char>{GetLocalRaw()});
 #endif
 
 #ifdef HAVE_TCP
@@ -166,6 +146,6 @@ SocketAddress::GetSteadyPart() const noexcept
 #endif
 
 	default:
-		return nullptr;
+		return {};
 	}
 }

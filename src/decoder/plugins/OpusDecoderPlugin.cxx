@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "OpusDecoderPlugin.h"
 #include "OggDecoder.hxx"
@@ -24,6 +8,7 @@
 #include "OpusTags.hxx"
 #include "lib/xiph/OggPacket.hxx"
 #include "lib/xiph/OggFind.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "../DecoderAPI.hxx"
 #include "decoder/Reader.hxx"
 #include "input/Reader.hxx"
@@ -31,7 +16,6 @@
 #include "tag/Handler.hxx"
 #include "tag/Builder.hxx"
 #include "input/InputStream.hxx"
-#include "util/RuntimeError.hxx"
 #include "Log.hxx"
 
 #include <opus.h>
@@ -49,15 +33,15 @@ constexpr opus_int32 opus_sample_rate = 48000;
  */
 constexpr unsigned opus_output_buffer_frames = opus_sample_rate / 4;
 
-gcc_pure
-bool
+[[gnu::pure]]
+static bool
 IsOpusHead(const ogg_packet &packet) noexcept
 {
 	return packet.bytes >= 8 && memcmp(packet.packet, "OpusHead", 8) == 0;
 }
 
-gcc_pure
-bool
+[[gnu::pure]]
+static bool
 IsOpusTags(const ogg_packet &packet) noexcept
 {
 	return packet.bytes >= 8 && memcmp(packet.packet, "OpusTags", 8) == 0;
@@ -66,7 +50,7 @@ IsOpusTags(const ogg_packet &packet) noexcept
 /**
  * Convert an EBU R128 value to ReplayGain.
  */
-constexpr float
+static constexpr float
 EbuR128ToReplayGain(float ebu_r128) noexcept
 {
 	/* add 5dB to compensate for the different reference levels
@@ -74,7 +58,7 @@ EbuR128ToReplayGain(float ebu_r128) noexcept
 	return ebu_r128 + 5;
 }
 
-bool
+static bool
 mpd_opus_init([[maybe_unused]] const ConfigBlock &block)
 {
 	LogDebug(opus_domain, opus_get_version_string());
@@ -114,11 +98,9 @@ class MPDOpusDecoder final : public OggDecoder {
 	 */
 	unsigned previous_channels = 0;
 
-	size_t frame_size;
-
 	/**
 	 * The granulepos of the next sample to be submitted to
-	 * DecoderClient::SubmitData().  Negative if unkown.
+	 * DecoderClient::SubmitAudio().  Negative if unkown.
 	 * Initialized by OnOggBeginning().
 	 */
 	ogg_int64_t granulepos;
@@ -208,8 +190,8 @@ MPDOpusDecoder::OnOggBeginning(const ogg_packet &packet)
 	assert(IsInitialized() == (output_buffer != nullptr));
 
 	if (IsInitialized() && channels != previous_channels)
-		throw FormatRuntimeError("Next stream has different channels (%u -> %u)",
-					 previous_channels, channels);
+		throw FmtRuntimeError("Next stream has different channels ({} -> {})",
+				      previous_channels, channels);
 
 	/* TODO: parse attributes from the OpusHead (sample rate,
 	   channels, ...) */
@@ -218,8 +200,8 @@ MPDOpusDecoder::OnOggBeginning(const ogg_packet &packet)
 	opus_decoder = opus_decoder_create(opus_sample_rate, channels,
 					   &opus_error);
 	if (opus_decoder == nullptr)
-		throw FormatRuntimeError("libopus error: %s",
-					 opus_strerror(opus_error));
+		throw FmtRuntimeError("libopus error: {}",
+				      opus_strerror(opus_error));
 
 	if (IsInitialized()) {
 		/* decoder was already initialized by the previous
@@ -238,7 +220,6 @@ MPDOpusDecoder::OnOggBeginning(const ogg_packet &packet)
 	const AudioFormat audio_format(opus_sample_rate,
 				       SampleFormat::S16, channels);
 	client.Ready(audio_format, eos_granulepos > 0, duration);
-	frame_size = audio_format.GetFrameSize();
 
 	if (output_buffer == nullptr)
 		/* note: if we ever support changing the channel count
@@ -319,13 +300,20 @@ MPDOpusDecoder::HandleAudio(const ogg_packet &packet)
 				  packet.bytes,
 				  output_buffer, opus_output_buffer_frames,
 				  0);
-	if (gcc_unlikely(nframes <= 0)) {
+	if (nframes <= 0) [[unlikely]] {
 		if (nframes < 0)
-			throw FormatRuntimeError("libopus error: %s",
-						 opus_strerror(nframes));
+			throw FmtRuntimeError("libopus error: {}",
+					      opus_strerror(nframes));
 		else
 			return;
 	}
+
+	/* Formula for calculation of bitrate of the current opus packet:
+	   bits_sent_into_decoder = packet.bytes * 8
+	   1/seconds_decoded = opus_sample_rate / nframes
+	   kbits = bits_sent_into_decoder * 1/seconds_decoded / 1000
+	*/
+	uint16_t kbits = (unsigned int)packet.bytes*8 * opus_sample_rate / nframes / 1000;
 
 	/* apply the "skip" value */
 	if (skip >= (unsigned)nframes) {
@@ -358,10 +346,10 @@ MPDOpusDecoder::HandleAudio(const ogg_packet &packet)
 	}
 
 	/* submit decoded samples to the DecoderClient */
-	const size_t nbytes = nframes * frame_size;
-	auto cmd = client.SubmitData(input_stream,
-				     data, nbytes,
-				     0);
+	const size_t n_samples = nframes * previous_channels;
+	auto cmd = client.SubmitAudio(input_stream,
+				      std::span{data, n_samples},
+				      kbits);
 	if (cmd != DecoderCommand::NONE)
 		throw cmd;
 

@@ -45,8 +45,7 @@ thirdparty_libs = [
     gme,
     ffmpeg,
     libnfs,
-    jack,
-    boost,
+    libsamplerate,
 ]
 
 # build the third-party libraries

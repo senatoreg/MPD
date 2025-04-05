@@ -1,33 +1,17 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_PLAYER_CONTROL_HXX
 #define MPD_PLAYER_CONTROL_HXX
 
 #include "output/Client.hxx"
+#include "config/PlayerConfig.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "thread/Thread.hxx"
 #include "CrossFade.hxx"
 #include "Chrono.hxx"
-#include "ReplayGainConfig.hxx"
 #include "ReplayGainMode.hxx"
 #include "MusicChunkPtr.hxx"
 
@@ -36,6 +20,7 @@
 #include <memory>
 
 struct Tag;
+struct PlayerConfig;
 class PlayerListener;
 class PlayerOutputs;
 class InputCacheManager;
@@ -118,12 +103,7 @@ class PlayerControl final : public AudioOutputClient {
 
 	InputCacheManager *const input_cache;
 
-	const unsigned buffer_chunks;
-
-	/**
-	 * The "audio_output_format" setting.
-	 */
-	const AudioFormat configured_audio_format;
+	const PlayerConfig config;
 
 	/**
 	 * The handle of the player thread.
@@ -229,17 +209,13 @@ class PlayerControl final : public AudioOutputClient {
 
 	CrossFadeSettings cross_fade;
 
-	const ReplayGainConfig replay_gain_config;
-
 	FloatDuration total_play_time = FloatDuration::zero();
 
 public:
 	PlayerControl(PlayerListener &_listener,
 		      PlayerOutputs &_outputs,
 		      InputCacheManager *_input_cache,
-		      unsigned buffer_chunks,
-		      AudioFormat _configured_audio_format,
-		      const ReplayGainConfig &_replay_gain_config) noexcept;
+		      const PlayerConfig &_config) noexcept;
 	~PlayerControl() noexcept;
 
 	void Kill() noexcept;
@@ -248,7 +224,7 @@ public:
 	 * Like CheckRethrowError(), but locks and unlocks the object.
 	 */
 	void LockCheckRethrowError() const {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		CheckRethrowError();
 	}
 
@@ -317,7 +293,7 @@ public:
 	}
 
 	void LockSetReplayGainMode(ReplayGainMode _mode) noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		replay_gain_mode = _mode;
 	}
 
@@ -340,7 +316,7 @@ public:
 
 	[[gnu::pure]]
 	SyncInfo LockGetSyncInfo() const noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		return {state, next_song != nullptr};
 	}
 
@@ -362,7 +338,7 @@ private:
 	 * this function.
 	 */
 	void LockSignal() noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		Signal();
 	}
 
@@ -415,7 +391,7 @@ private:
 	}
 
 	void LockCommandFinished() noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		CommandFinished();
 	}
 
@@ -433,7 +409,7 @@ private:
 				unsigned threshold) noexcept;
 
 	bool LockWaitOutputConsumed(unsigned threshold) noexcept {
-		std::unique_lock<Mutex> lock(mutex);
+		std::unique_lock lock{mutex};
 		return WaitOutputConsumed(lock, threshold);
 	}
 
@@ -472,7 +448,7 @@ private:
 	 * object.
 	 */
 	void LockSynchronousCommand(PlayerCommand cmd) noexcept {
-		std::unique_lock<Mutex> lock(mutex);
+		std::unique_lock lock{mutex};
 		SynchronousCommand(lock, cmd);
 	}
 
@@ -510,7 +486,7 @@ private:
 	}
 
 	void LockSetOutputError(std::exception_ptr &&_error) noexcept {
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		SetOutputError(std::move(_error));
 	}
 

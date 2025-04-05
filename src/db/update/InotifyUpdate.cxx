@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "InotifyUpdate.hxx"
 #include "InotifyDomain.hxx"
@@ -25,12 +9,13 @@
 #include "storage/StorageInterface.hxx"
 #include "input/InputStream.hxx"
 #include "input/Error.hxx"
+#include "input/LocalOpen.hxx"
+#include "input/WaitReady.hxx"
 #include "fs/AllocatedPath.hxx"
 #include "fs/DirectoryReader.hxx"
 #include "fs/FileInfo.hxx"
 #include "fs/Traits.hxx"
 #include "thread/Mutex.hxx"
-#include "util/Compiler.h"
 #include "Log.hxx"
 
 #include <cassert>
@@ -77,10 +62,10 @@ struct WatchDirectory {
 
 	void LoadExcludeList(Path directory_path) noexcept;
 
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	unsigned GetDepth() const noexcept;
 
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	AllocatedPath GetUriFS() const noexcept;
 };
 
@@ -88,8 +73,9 @@ void
 WatchDirectory::LoadExcludeList(Path directory_path) noexcept
 try {
 	Mutex mutex;
-	auto is = InputStream::OpenReady((directory_path / Path::FromFS(".mpdignore")).c_str(),
-					 mutex);
+	auto is = OpenLocalInputStream(directory_path / Path::FromFS(".mpdignore"),
+				       mutex);
+	LockWaitReady(*is);
 	exclude_list.Load(std::move(is));
 } catch (...) {
 	if (!IsFileNotFound(std::current_exception()))
@@ -118,7 +104,7 @@ InotifyUpdate::Disable(WatchDirectory &directory) noexcept
 	for (WatchDirectory &child : directory.children)
 		Disable(child);
 
-	source.Remove(directory.descriptor);
+	inotify_event.RemoveWatch(directory.descriptor);
 }
 
 void
@@ -153,7 +139,7 @@ WatchDirectory::GetUriFS() const noexcept
 }
 
 /* we don't look at "." / ".." nor files with newlines in their name */
-gcc_pure
+[[gnu::pure]]
 static bool
 SkipFilename(Path name) noexcept
 {
@@ -199,7 +185,8 @@ try {
 			continue;
 
 		try {
-			ret = source.Add(child_path_fs.c_str(), IN_MASK);
+			ret = inotify_event.AddWatch(child_path_fs.c_str(),
+						     IN_MASK);
 		} catch (...) {
 			FmtError(inotify_domain,
 				 "Failed to register {}: {}",
@@ -225,7 +212,7 @@ try {
 	LogError(std::current_exception());
 }
 
-gcc_pure
+[[gnu::pure]]
 unsigned
 WatchDirectory::GetDepth() const noexcept
 {
@@ -240,7 +227,7 @@ WatchDirectory::GetDepth() const noexcept
 inline
 InotifyUpdate::InotifyUpdate(EventLoop &loop, UpdateService &update,
 			     unsigned _max_depth)
-	:source(loop, InotifyCallback, this),
+	:inotify_event(loop, *this),
 	 queue(loop, update),
 	 max_depth(_max_depth)
 {
@@ -251,7 +238,7 @@ InotifyUpdate::~InotifyUpdate() noexcept = default;
 inline void
 InotifyUpdate::Start(Path path)
 {
-	int descriptor = source.Add(path.c_str(), IN_MASK);
+	int descriptor = inotify_event.AddWatch(path.c_str(), IN_MASK);
 
 	root = std::make_unique<WatchDirectory>(path, descriptor);
 	root->LoadExcludeList(path);
@@ -262,8 +249,7 @@ InotifyUpdate::Start(Path path)
 }
 
 void
-InotifyUpdate::InotifyCallback(int wd, unsigned mask,
-			       [[maybe_unused]] const char *name) noexcept
+InotifyUpdate::OnInotify(int wd, unsigned mask, const char *)
 {
 	auto i = directories.find(wd);
 	if (i == directories.end())
@@ -312,6 +298,12 @@ InotifyUpdate::InotifyCallback(int wd, unsigned mask,
 		else
 			queue.Enqueue("");
 	}
+}
+
+void
+InotifyUpdate::OnInotifyError(std::exception_ptr error) noexcept
+{
+	LogError(error, "inotify error");
 }
 
 std::unique_ptr<InotifyUpdate>

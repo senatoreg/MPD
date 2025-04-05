@@ -1,26 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Order.hxx"
 #include "Buffer.hxx"
-#include "util/ConstBuffer.hxx"
-
+#include "util/SpanCast.hxx"
 
 /*
  * According to:
@@ -109,12 +92,12 @@ ToAlsaChannelOrder50(V *dest, const V *src, size_t n) noexcept
 }
 
 template<typename V>
-static inline ConstBuffer<V>
-ToAlsaChannelOrder50(PcmBuffer &buffer, ConstBuffer<V> src) noexcept
+static inline std::span<const V>
+ToAlsaChannelOrder50(PcmBuffer &buffer, std::span<const V> src) noexcept
 {
-	auto dest = buffer.GetT<V>(src.size);
-	ToAlsaChannelOrder50(dest, src.data, src.size / 5);
-	return { dest, src.size };
+	auto dest = buffer.GetT<V>(src.size());
+	ToAlsaChannelOrder50(dest, src.data(), src.size() / 5);
+	return { dest, src.size() };
 }
 
 template<typename V>
@@ -127,12 +110,12 @@ ToAlsaChannelOrder51(V *dest, const V *src, size_t n) noexcept
 }
 
 template<typename V>
-static inline ConstBuffer<V>
-ToAlsaChannelOrder51(PcmBuffer &buffer, ConstBuffer<V> src) noexcept
+static inline std::span<const V>
+ToAlsaChannelOrder51(PcmBuffer &buffer, std::span<const V> src) noexcept
 {
-	auto dest = buffer.GetT<V>(src.size);
-	ToAlsaChannelOrder51(dest, src.data, src.size / 6);
-	return { dest, src.size };
+	auto dest = buffer.GetT<V>(src.size());
+	ToAlsaChannelOrder51(dest, src.data(), src.size() / 6);
+	return { dest, src.size() };
 }
 
 template<typename V>
@@ -145,12 +128,12 @@ ToAlsaChannelOrder70(V *dest, const V *src, size_t n) noexcept
 }
 
 template<typename V>
-static inline ConstBuffer<V>
-ToAlsaChannelOrder70(PcmBuffer &buffer, ConstBuffer<V> src) noexcept
+static inline std::span<const V>
+ToAlsaChannelOrder70(PcmBuffer &buffer, std::span<const V> src) noexcept
 {
-	auto dest = buffer.GetT<V>(src.size);
-	ToAlsaChannelOrder70(dest, src.data, src.size / 7);
-	return { dest, src.size };
+	auto dest = buffer.GetT<V>(src.size());
+	ToAlsaChannelOrder70(dest, src.data(), src.size() / 7);
+	return { dest, src.size() };
 }
 
 template<typename V>
@@ -163,17 +146,17 @@ ToAlsaChannelOrder71(V *dest, const V *src, size_t n) noexcept
 }
 
 template<typename V>
-static inline ConstBuffer<V>
-ToAlsaChannelOrder71(PcmBuffer &buffer, ConstBuffer<V> src) noexcept
+static inline std::span<const V>
+ToAlsaChannelOrder71(PcmBuffer &buffer, std::span<const V> src) noexcept
 {
-	auto dest = buffer.GetT<V>(src.size);
-	ToAlsaChannelOrder71(dest, src.data, src.size / 8);
-	return { dest, src.size };
+	auto dest = buffer.GetT<V>(src.size());
+	ToAlsaChannelOrder71(dest, src.data(), src.size() / 8);
+	return { dest, src.size() };
 }
 
 template<typename V>
-static ConstBuffer<V>
-ToAlsaChannelOrderT(PcmBuffer &buffer, ConstBuffer<V> src,
+static std::span<const V>
+ToAlsaChannelOrderT(PcmBuffer &buffer, std::span<const V> src,
 		    unsigned channels) noexcept
 {
 	switch (channels) {
@@ -194,8 +177,8 @@ ToAlsaChannelOrderT(PcmBuffer &buffer, ConstBuffer<V> src,
 	}
 }
 
-ConstBuffer<void>
-ToAlsaChannelOrder(PcmBuffer &buffer, ConstBuffer<void> src,
+std::span<const std::byte>
+ToAlsaChannelOrder(PcmBuffer &buffer, std::span<const std::byte> src,
 		   SampleFormat sample_format, unsigned channels) noexcept
 {
 	switch (sample_format) {
@@ -205,16 +188,16 @@ ToAlsaChannelOrder(PcmBuffer &buffer, ConstBuffer<void> src,
 		return src;
 
 	case SampleFormat::S16:
-		return ToAlsaChannelOrderT(buffer,
-					   ConstBuffer<int16_t>::FromVoid(src),
-					   channels).ToVoid();
+		return std::as_bytes(ToAlsaChannelOrderT(buffer,
+							 FromBytesStrict<const int16_t>(src),
+							 channels));
 
 	case SampleFormat::S24_P32:
 	case SampleFormat::S32:
 	case SampleFormat::FLOAT:
-		return ToAlsaChannelOrderT(buffer,
-					   ConstBuffer<int32_t>::FromVoid(src),
-					   channels).ToVoid();
+		return std::as_bytes(ToAlsaChannelOrderT(buffer,
+							 FromBytesStrict<const int32_t>(src),
+							 channels));
 	}
 
 	gcc_unreachable();

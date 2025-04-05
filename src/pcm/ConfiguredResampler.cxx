@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ConfiguredResampler.hxx"
 #include "FallbackResampler.hxx"
@@ -23,7 +7,7 @@
 #include "config/Option.hxx"
 #include "config/Block.hxx"
 #include "config/Param.hxx"
-#include "util/RuntimeError.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "config.h"
 
 #ifdef ENABLE_LIBSAMPLERATE
@@ -122,8 +106,8 @@ GetResamplerConfig(const ConfigData &config, ConfigBlock &buffer)
 		return MigrateResamplerConfig(old_param, buffer);
 
 	if (old_param != nullptr)
-		throw FormatRuntimeError("Cannot use both 'resampler' (line %d) and 'samplerate_converter' (line %d)",
-					 block->line, old_param->line);
+		throw FmtRuntimeError("Cannot use both 'resampler' (line {}) and 'samplerate_converter' (line {})",
+				      block->line, old_param->line);
 
 	block->SetUsed();
 	return block;
@@ -137,8 +121,8 @@ pcm_resampler_global_init(const ConfigData &config)
 
 	const char *plugin_name = block->GetBlockValue("plugin");
 	if (plugin_name == nullptr)
-		throw FormatRuntimeError("'plugin' missing in line %d",
-					 block->line);
+		throw FmtRuntimeError("'plugin' missing in line {}",
+				      block->line);
 
 	if (strcmp(plugin_name, "internal") == 0) {
 		selected_resampler = SelectedResampler::FALLBACK;
@@ -153,8 +137,8 @@ pcm_resampler_global_init(const ConfigData &config)
 		pcm_resample_lsr_global_init(*block);
 #endif
 	} else {
-		throw FormatRuntimeError("No such resampler plugin: %s",
-					 plugin_name);
+		throw FmtRuntimeError("No such resampler plugin: {}",
+				      plugin_name);
 	}
 }
 

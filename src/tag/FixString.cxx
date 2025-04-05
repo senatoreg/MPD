@@ -1,27 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "FixString.hxx"
 #include "util/AllocatedArray.hxx"
 #include "util/CharUtil.hxx"
-#include "util/WritableBuffer.hxx"
-#include "util/StringView.hxx"
 #include "util/UTF8.hxx"
 
 #include <algorithm>
@@ -56,14 +38,14 @@ FindInvalidUTF8(const char *p, const char *const end) noexcept
  * Replace invalid sequences with the question mark.
  */
 static AllocatedArray<char>
-patch_utf8(StringView src, const char *_invalid)
+patch_utf8(std::string_view src, const char *_invalid) noexcept
 {
 	/* duplicate the string, and replace invalid bytes in that
 	   buffer */
 	AllocatedArray<char> dest{src};
-	char *const end = dest.data() + src.size;
+	char *const end = dest.data() + src.size();
 
-	char *invalid = dest.data() + (_invalid - src.data);
+	char *invalid = dest.data() + (_invalid - src.data());
 	do {
 		*invalid = '?';
 
@@ -75,10 +57,10 @@ patch_utf8(StringView src, const char *_invalid)
 }
 
 static AllocatedArray<char>
-fix_utf8(StringView p)
+fix_utf8(std::string_view p) noexcept
 {
 	/* check if the string is already valid UTF-8 */
-	const char *invalid = FindInvalidUTF8(p.begin(), p.end());
+	const char *invalid = FindInvalidUTF8(p.data(), p.data() + p.size());
 	if (invalid == nullptr)
 		return nullptr;
 
@@ -86,8 +68,9 @@ fix_utf8(StringView p)
 	return patch_utf8(p, invalid);
 }
 
+[[gnu::pure]]
 static const char *
-find_non_printable(StringView p)
+find_non_printable(std::string_view p) noexcept
 {
 	for (const char &ch : p)
 		if (IsNonPrintableASCII(ch))
@@ -101,7 +84,7 @@ find_non_printable(StringView p)
  * Returns nullptr if nothing needs to be cleared.
  */
 static AllocatedArray<char>
-clear_non_printable(StringView src)
+clear_non_printable(std::string_view src)
 {
 	const char *first = find_non_printable(src);
 	if (first == nullptr)
@@ -109,7 +92,7 @@ clear_non_printable(StringView src)
 
 	AllocatedArray<char> dest{src};
 
-	for (size_t i = first - src.data; i < src.size; ++i)
+	for (size_t i = first - src.data(); i < src.size(); ++i)
 		if (IsNonPrintableASCII(dest[i]))
 			dest[i] = ' ';
 
@@ -118,7 +101,7 @@ clear_non_printable(StringView src)
 
 [[gnu::pure]]
 static bool
-IsSafe(StringView s) noexcept
+IsSafe(std::string_view s) noexcept
 {
 	return std::all_of(s.begin(), s.end(),
 			   [](char ch){
@@ -127,7 +110,7 @@ IsSafe(StringView s) noexcept
 }
 
 AllocatedArray<char>
-FixTagString(StringView p)
+FixTagString(std::string_view p) noexcept
 {
 	if (IsSafe(p))
 		/* optimistic optimization for the common case */

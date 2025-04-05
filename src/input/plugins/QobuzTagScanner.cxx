@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "QobuzTagScanner.hxx"
 #include "QobuzErrorParser.hxx"
@@ -23,6 +7,8 @@
 #include "lib/yajl/Callbacks.hxx"
 #include "tag/Builder.hxx"
 #include "tag/Tag.hxx"
+
+using std::string_view_literals::operator""sv;
 
 using Wrapper = Yajl::CallbacksWrapper<QobuzTagScanner::ResponseParser>;
 static constexpr yajl_callbacks parse_callbacks = {
@@ -68,23 +54,23 @@ public:
 
 	/* yajl callbacks */
 	bool Integer(long long value) noexcept;
-	bool String(StringView value) noexcept;
+	bool String(std::string_view value) noexcept;
 	bool StartMap() noexcept;
-	bool MapKey(StringView value) noexcept;
+	bool MapKey(std::string_view value) noexcept;
 	bool EndMap() noexcept;
 };
 
 static std::string
-MakeTrackUrl(QobuzClient &client, const char *track_id)
+MakeTrackUrl(QobuzClient &client, std::string_view track_id)
 {
 	return client.MakeUrl("track", "get",
 			      {
-				      {"track_id", track_id},
+				      {"track_id", std::string{track_id}},
 			      });
 }
 
 QobuzTagScanner::QobuzTagScanner(QobuzClient &client,
-				 const char *track_id,
+				 std::string_view track_id,
 				 RemoteTagHandler &_handler)
 	:request(client.GetCurl(),
 		 MakeTrackUrl(client, track_id).c_str(),
@@ -142,7 +128,7 @@ QobuzTagScanner::ResponseParser::Integer(long long value) noexcept
 }
 
 inline bool
-QobuzTagScanner::ResponseParser::String(StringView value) noexcept
+QobuzTagScanner::ResponseParser::String(std::string_view value) noexcept
 {
 	switch (state) {
 	case State::TITLE:
@@ -185,19 +171,19 @@ QobuzTagScanner::ResponseParser::StartMap() noexcept
 }
 
 inline bool
-QobuzTagScanner::ResponseParser::MapKey(StringView value) noexcept
+QobuzTagScanner::ResponseParser::MapKey(std::string_view value) noexcept
 {
 	switch (map_depth) {
 	case 1:
-		if (value.Equals("composer"))
+		if (value == "composer"sv)
 			state = State::COMPOSER;
-		else if (value.Equals("duration"))
+		else if (value == "duration"sv)
 			state = State::DURATION;
-		else if (value.Equals("title"))
+		else if (value == "title"sv)
 			state = State::TITLE;
-		else if (value.Equals("album"))
+		else if (value == "album"sv)
 			state = State::ALBUM;
-		else if (value.Equals("performer"))
+		else if (value == "performer"sv)
 			state = State::PERFORMER;
 		else
 			state = State::NONE;
@@ -212,7 +198,7 @@ QobuzTagScanner::ResponseParser::MapKey(StringView value) noexcept
 
 		case State::COMPOSER:
 		case State::COMPOSER_NAME:
-			if (value.Equals("name"))
+			if (value == "name"sv)
 				state = State::COMPOSER_NAME;
 			else
 				state = State::COMPOSER;
@@ -222,9 +208,9 @@ QobuzTagScanner::ResponseParser::MapKey(StringView value) noexcept
 		case State::ALBUM_TITLE:
 		case State::ALBUM_ARTIST:
 		case State::ALBUM_ARTIST_NAME:
-			if (value.Equals("title"))
+			if (value == "title"sv)
 				state = State::ALBUM_TITLE;
-			else if (value.Equals("artist"))
+			else if (value == "artist"sv)
 				state = State::ALBUM_ARTIST;
 			else
 				state = State::ALBUM;
@@ -232,7 +218,7 @@ QobuzTagScanner::ResponseParser::MapKey(StringView value) noexcept
 
 		case State::PERFORMER:
 		case State::PERFORMER_NAME:
-			if (value.Equals("name"))
+			if (value == "name"sv)
 				state = State::PERFORMER_NAME;
 			else
 				state = State::PERFORMER;
@@ -247,7 +233,7 @@ QobuzTagScanner::ResponseParser::MapKey(StringView value) noexcept
 		switch (state) {
 		case State::ALBUM_ARTIST:
 		case State::ALBUM_ARTIST_NAME:
-			if (value.Equals("name"))
+			if (value == "name"sv)
 				state = State::ALBUM_ARTIST_NAME;
 			else
 				state = State::ALBUM_ARTIST;

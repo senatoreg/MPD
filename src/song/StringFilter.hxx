@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_STRING_FILTER_HXX
 #define MPD_STRING_FILTER_HXX
@@ -27,10 +11,24 @@
 #include "lib/pcre/UniqueRegex.hxx"
 #endif
 
+#include <cstdint>
 #include <string>
 #include <memory>
 
 class StringFilter {
+public:
+	enum class Position : uint_least8_t {
+		/** compare the whole haystack */
+		FULL,
+
+		/** find the phrase anywhere in the haystack */
+		ANYWHERE,
+
+		/** check if the haystack starts with the given prefix */
+		PREFIX,
+	};
+
+private:
 	std::string value;
 
 	/**
@@ -42,21 +40,19 @@ class StringFilter {
 	std::shared_ptr<UniqueRegex> regex;
 #endif
 
-	/**
-	 * Search for substrings instead of matching the whole string?
-	 */
-	bool substring;
+	Position position;
 
 	bool negated;
 
 public:
 	template<typename V>
-	StringFilter(V &&_value, bool _fold_case, bool _substring, bool _negated)
+	StringFilter(V &&_value, bool _fold_case, Position _position, bool _negated)
 		:value(std::forward<V>(_value)),
 		 fold_case(_fold_case
 			   ? IcuCompare(value)
 			   : IcuCompare()),
-		 substring(_substring), negated(_negated) {}
+		 position(_position),
+		 negated(_negated) {}
 
 	bool empty() const noexcept {
 		return value.empty();
@@ -94,11 +90,21 @@ public:
 	}
 
 	const char *GetOperator() const noexcept {
-		return IsRegex()
-			? (negated ? "!~" : "=~")
-			: (substring
-			   ? (negated ? "!contains" : "contains")
-			   : (negated ? "!=" : "=="));
+		if (IsRegex())
+			return negated ? "!~" : "=~";
+
+		switch (position) {
+		case Position::FULL:
+			break;
+
+		case Position::ANYWHERE:
+			return negated ? "!contains" : "contains";
+
+		case Position::PREFIX:
+			return negated ? "!starts_with" : "starts_with";
+		}
+
+		return negated ? "!=" : "==";
 	}
 
 	[[gnu::pure]]

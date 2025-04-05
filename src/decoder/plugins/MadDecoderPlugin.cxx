@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "MadDecoderPlugin.hxx"
@@ -25,7 +9,7 @@
 #include "tag/Id3ReplayGain.hxx"
 #include "tag/Id3MixRamp.hxx"
 #include "tag/Handler.hxx"
-#include "tag/ReplayGain.hxx"
+#include "tag/ReplayGainParser.hxx"
 #include "tag/MixRampParser.hxx"
 #include "pcm/CheckAudioFormat.hxx"
 #include "util/Clamp.hxx"
@@ -66,7 +50,7 @@ static constexpr unsigned DECODERDELAY = 529;
 
 static constexpr Domain mad_domain("mad");
 
-gcc_const
+[[gnu::const]]
 static SongTime
 ToSongTime(mad_timer_t t) noexcept
 {
@@ -151,10 +135,10 @@ private:
 	void ParseId3(size_t tagsize, Tag *tag) noexcept;
 	MadDecoderAction DecodeNextFrame(bool skip, Tag *tag) noexcept;
 
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	offset_type ThisFrameOffset() const noexcept;
 
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	offset_type RestIncludingThisFrame() const noexcept;
 
 	/**
@@ -173,7 +157,7 @@ private:
 		times = new mad_timer_t[max_frames];
 	}
 
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	size_t TimeToFrame(SongTime t) const noexcept;
 
 	/**
@@ -185,13 +169,13 @@ private:
 
 	/**
 	 * Sends the synthesized current frame via
-	 * DecoderClient::SubmitData().
+	 * DecoderClient::SubmitAudio().
 	 */
 	DecoderCommand SubmitPCM(size_t start, size_t n) noexcept;
 
 	/**
 	 * Synthesize the current frame and send it via
-	 * DecoderClient::SubmitData().
+	 * DecoderClient::SubmitAudio().
 	 */
 	DecoderCommand SynthAndSubmit() noexcept;
 
@@ -253,7 +237,7 @@ MadDecoder::FillBuffer() noexcept
 		return false;
 
 	size_t nbytes = decoder_read(client, input_stream,
-				     dest, max_read_size);
+				     {reinterpret_cast<std::byte *>(dest), max_read_size});
 	if (nbytes == 0) {
 		if (was_eof || max_read_size < MAD_BUFFER_GUARD)
 			return false;
@@ -282,12 +266,12 @@ MadDecoder::ParseId3(size_t tagsize, Tag *mpd_tag) noexcept
 		id3_data = stream.this_frame;
 		mad_stream_skip(&(stream), tagsize);
 	} else {
-		allocated = std::make_unique<id3_byte_t[]>(tagsize);
+		allocated = std::make_unique_for_overwrite<id3_byte_t[]>(tagsize);
 		memcpy(allocated.get(), stream.this_frame, count);
 		mad_stream_skip(&(stream), count);
 
 		if (!decoder_read_full(client, input_stream,
-				       allocated.get() + count, tagsize - count)) {
+				       {reinterpret_cast<std::byte *>(allocated.get() + count), tagsize - count})) {
 			LogDebug(mad_domain, "error parsing ID3 tag");
 			return;
 		}
@@ -545,7 +529,7 @@ parse_lame(struct lame *lame, struct mad_bitptr *ptr, int *bitlen) noexcept
 	           &lame->version.major, &lame->version.minor) != 2)
 		return false;
 
-	FmtDebug(mad_domain, "detected LAME version {}.{} (\"{}\")",
+	FmtDebug(mad_domain, "detected LAME version {}.{} ({:?})",
 		 lame->version.major, lame->version.minor, lame->encoder);
 
 	/* The reference volume was changed from the 83dB used in the
@@ -677,11 +661,6 @@ inline bool
 MadDecoder::DecodeFirstFrame(Tag *tag) noexcept
 {
 	struct xing xing;
-
-#if GCC_CHECK_VERSION(10,0)
-	/* work around bogus -Wuninitialized in GCC 10 */
-	xing.frames = 0;
-#endif
 
 	while (true) {
 		const auto action = DecodeNextFrame(false, tag);
@@ -821,9 +800,9 @@ MadDecoder::SubmitPCM(size_t i, size_t pcm_length) noexcept
 			       MAD_NCHANNELS(&frame.header));
 	num_samples *= MAD_NCHANNELS(&frame.header);
 
-	return client->SubmitData(input_stream, output_buffer,
-				  sizeof(output_buffer[0]) * num_samples,
-				  frame.header.bitrate / 1000);
+	return client->SubmitAudio(input_stream,
+				   std::span{output_buffer, num_samples},
+				   frame.header.bitrate / 1000);
 }
 
 inline DecoderCommand

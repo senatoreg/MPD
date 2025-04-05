@@ -1,29 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "UDisks2.hxx"
 #include "Message.hxx"
 #include "ReadIter.hxx"
 #include "ObjectManager.hxx"
+#include "util/SpanCast.hxx"
 #include "util/StringAPI.hxx"
-#include "util/StringView.hxx"
-#include "util/Compiler.h"
 
 #include <functional>
 #include <stdexcept>
@@ -31,7 +14,7 @@
 namespace UDisks2 {
 
 template<typename I>
-gcc_pure
+[[gnu::pure]]
 static const char *
 CheckString(I &&i) noexcept
 {
@@ -42,35 +25,35 @@ CheckString(I &&i) noexcept
 }
 
 template<typename I>
-gcc_pure
-static StringView
+[[gnu::pure]]
+static std::string_view
 CheckRecursedByteArrayToString(I &&i) noexcept
 {
 	if (i.GetArgType() != DBUS_TYPE_BYTE)
-		return nullptr;
+		return {};
 
 	auto value = i.template GetFixedArray<char>();
-	return { value.data, value.size };
+	return ToStringView(value);
 }
 
 template<typename I>
-gcc_pure
-static StringView
+[[gnu::pure]]
+static std::string_view
 CheckByteArrayToString(I &&i) noexcept
 {
 	if (i.GetArgType() != DBUS_TYPE_ARRAY)
-		return nullptr;
+		return {};
 
 	return CheckRecursedByteArrayToString(i.Recurse());
 }
 
 template<typename I>
-gcc_pure
-static StringView
+[[gnu::pure]]
+static std::string_view
 CheckByteArrayArrayFrontToString(I &&i) noexcept
 {
 	if (i.GetArgType() != DBUS_TYPE_ARRAY)
-		return nullptr;
+		return {};
 
 	return CheckByteArrayToString(i.Recurse());
 }
@@ -109,8 +92,8 @@ ParseFileesystemDictEntry(Object &o, const char *name,
 
 		/* get the first string in the array */
 		auto value = CheckByteArrayArrayFrontToString(value_i);
-		if (value != nullptr)
-			o.mount_point = {value.data, value.size};
+		if (value.data() != nullptr)
+			o.mount_point = value;
 
 		// TODO: check whether the string is a valid filesystem path
 	}

@@ -1,32 +1,13 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "OpenmptDecoderPlugin.hxx"
-#include "decoder/Features.h"
 #include "ModCommon.hxx"
 #include "../DecoderAPI.hxx"
 #include "input/InputStream.hxx"
 #include "tag/Handler.hxx"
-#include "tag/Type.h"
+#include "tag/Type.hxx"
 #include "util/Domain.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/StringView.hxx"
 #include "Log.hxx"
 
 #include <libopenmpt/libopenmpt.hpp>
@@ -44,8 +25,9 @@ static int openmpt_interpolation_filter;
 static bool openmpt_override_mptm_interp_filter;
 static int openmpt_volume_ramping;
 static bool openmpt_sync_samples;
+static std::string_view openmpt_at_end;
 static bool openmpt_emulate_amiga;
-#ifdef HAVE_LIBOPENMPT_VERSION_0_5
+#if OPENMPT_API_VERSION_AT_LEAST(0,5,0)
 static std::string_view openmpt_emulate_amiga_type;
 #endif
 
@@ -58,8 +40,9 @@ openmpt_decoder_init(const ConfigBlock &block)
 	openmpt_override_mptm_interp_filter = block.GetBlockValue("override_mptm_interp_filter", false);
 	openmpt_volume_ramping = block.GetBlockValue("volume_ramping", -1);
 	openmpt_sync_samples = block.GetBlockValue("sync_samples", true);
+	openmpt_at_end = block.GetBlockValue("at_end", "fadeout");
 	openmpt_emulate_amiga = block.GetBlockValue("emulate_amiga", true);
-#ifdef HAVE_LIBOPENMPT_VERSION_0_5
+#if OPENMPT_API_VERSION_AT_LEAST(0,5,0)
 	openmpt_emulate_amiga_type = block.GetBlockValue("emulate_amiga_type", "auto");
 #endif
 
@@ -70,10 +53,9 @@ static void
 mod_decode(DecoderClient &client, InputStream &is)
 {
 	int ret;
-	char audio_buffer[OPENMPT_FRAME_SIZE];
 
 	const auto buffer = mod_loadfile(&openmpt_domain, &client, is);
-	if (buffer.IsNull()) {
+	if (buffer == nullptr) {
 		LogWarning(openmpt_domain, "could not load stream");
 		return;
 	}
@@ -91,16 +73,19 @@ mod_decode(DecoderClient &client, InputStream &is)
 		mod.set_render_param(mod.RENDER_INTERPOLATIONFILTER_LENGTH, 0);
 	}
 	mod.set_render_param(mod.RENDER_VOLUMERAMPING_STRENGTH, openmpt_volume_ramping);
-#ifdef HAVE_LIBOPENMPT_VERSION_0_5
+#if OPENMPT_API_VERSION_AT_LEAST(0,5,0)
 	mod.ctl_set_boolean("seek.sync_samples", openmpt_sync_samples);
 	mod.ctl_set_boolean("render.resampler.emulate_amiga", openmpt_emulate_amiga);
 	mod.ctl_set_text("render.resampler.emulate_amiga_type", openmpt_emulate_amiga_type);
+	mod.ctl_set_text("play.at_end", openmpt_at_end);
 #else
 	mod.ctl_set("seek.sync_samples", std::to_string((unsigned)openmpt_sync_samples));
 	mod.ctl_set("render.resampler.emulate_amiga", std::to_string((unsigned)openmpt_emulate_amiga));
+	mod.ctl_set("play.at_end", std::string{openmpt_at_end});
 #endif
 
-	static constexpr AudioFormat audio_format(OPENMPT_SAMPLE_RATE, SampleFormat::FLOAT, 2);
+	static constexpr unsigned channels = 2;
+	static constexpr AudioFormat audio_format(OPENMPT_SAMPLE_RATE, SampleFormat::FLOAT, channels);
 	assert(audio_format.IsValid());
 
 	client.Ready(audio_format, is.IsSeekable(),
@@ -108,13 +93,16 @@ mod_decode(DecoderClient &client, InputStream &is)
 
 	DecoderCommand cmd;
 	do {
-		ret = mod.read_interleaved_stereo(OPENMPT_SAMPLE_RATE, OPENMPT_FRAME_SIZE / 2 / sizeof(float), (float*)audio_buffer);
+		float audio_buffer[OPENMPT_FRAME_SIZE / sizeof(float)];
+		ret = mod.read_interleaved_stereo(OPENMPT_SAMPLE_RATE,
+						  OPENMPT_FRAME_SIZE / channels / sizeof(float),
+						  audio_buffer);
 		if (ret <= 0)
 			break;
 
-		cmd = client.SubmitData(nullptr,
-					audio_buffer, ret * 2 * sizeof(float),
-					0);
+		cmd = client.SubmitAudio(nullptr,
+					 std::span{audio_buffer, ret * channels},
+					 0);
 
 		if (cmd == DecoderCommand::SEEK) {
 			mod.set_position_seconds(client.GetSeekTime().ToS());
@@ -128,7 +116,7 @@ static bool
 openmpt_scan_stream(InputStream &is, TagHandler &handler) noexcept
 try {
 	const auto buffer = mod_loadfile(&openmpt_domain, nullptr, is);
-	if (buffer.IsNull()) {
+	if (buffer == nullptr) {
 		LogWarning(openmpt_domain, "could not load stream");
 		return false;
 	}

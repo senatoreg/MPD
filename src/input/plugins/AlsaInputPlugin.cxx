@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 /*
  * ALSA code based on an example by Paul Davis released under GPL here:
@@ -28,12 +12,13 @@
 #include "lib/alsa/NonBlock.hxx"
 #include "lib/alsa/Error.hxx"
 #include "lib/alsa/Format.hxx"
+#include "lib/fmt/ToBuffer.hxx"
 #include "../AsyncInputStream.hxx"
 #include "event/Call.hxx"
 #include "config/Block.hxx"
 #include "util/Domain.hxx"
-#include "util/ASCII.hxx"
-#include "util/DivideString.hxx"
+#include "util/StringCompare.hxx"
+#include "util/StringSplit.hxx"
 #include "pcm/AudioParser.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "Log.hxx"
@@ -42,9 +27,13 @@
 
 #include <alsa/asoundlib.h>
 
+#include <fmt/core.h>
+
 #include <cassert>
 
 #include <string.h>
+
+using std::string_view_literals::operator""sv;
 
 static constexpr Domain alsa_input_domain("alsa");
 
@@ -77,7 +66,7 @@ class AlsaInputStream final
 	snd_pcm_t *capture_handle;
 	const size_t frame_size;
 
-	AlsaNonBlockPcm non_block;
+	Alsa::NonBlockPcm non_block;
 
 	InjectEvent defer_invalidate_sockets;
 
@@ -101,7 +90,7 @@ public:
 	AlsaInputStream(const AlsaInputStream &) = delete;
 	AlsaInputStream &operator=(const AlsaInputStream &) = delete;
 
-	static InputStreamPtr Create(EventLoop &event_loop, const char *uri,
+	static InputStreamPtr Create(EventLoop &event_loop, std::string_view uri,
 				     Mutex &mutex);
 
 protected:
@@ -118,7 +107,7 @@ protected:
 	}
 
 private:
-	void OpenDevice(const SourceSpec &spec);
+	void OpenDevice(const AudioFormat &audio_format);
 	void ConfigureCapture(AudioFormat audio_format);
 
 	void Pause() {
@@ -135,47 +124,44 @@ private:
 
 
 class AlsaInputStream::SourceSpec {
-	const char *uri;
-	const char *device_name;
-	const char *format_string;
+	std::string_view uri;
+	std::string_view device_name;
+	std::string_view format_string;
 	AudioFormat audio_format;
-	DivideString components;
 
 public:
-	explicit SourceSpec(const char *_uri)
+	[[nodiscard]]
+	explicit SourceSpec(std::string_view _uri)
 		: uri(_uri)
-		, components(uri, '?')
 	{
-		if (components.IsDefined()) {
-			device_name = StringAfterPrefixCaseASCII(components.GetFirst(),
-			                                                  ALSA_URI_PREFIX);
-			format_string = StringAfterPrefixCaseASCII(components.GetSecond(),
-			                                                        "format=");
-		}
-		else {
-			device_name = StringAfterPrefixCaseASCII(uri, ALSA_URI_PREFIX);
+		const auto [a, b] = Split(uri, '?');
+		device_name = StringAfterPrefixIgnoreCase(a, ALSA_URI_PREFIX);
+
+		if (b.data() != nullptr)
+			format_string = StringAfterPrefixIgnoreCase(b, "format="sv);
+		else if (global_config.default_format != nullptr)
 			format_string = global_config.default_format;
-		}
+
 		if (IsValidScheme()) {
-			if (*device_name == 0)
+			if (device_name.empty())
 				device_name = global_config.default_device;
-			if (format_string != nullptr)
+			if (format_string.data() != nullptr)
 				audio_format = ParseAudioFormat(format_string, false);
 		}
 	}
 	[[nodiscard]] bool IsValidScheme() const noexcept {
-		return device_name != nullptr;
+		return device_name.data() != nullptr;
 	}
 	[[nodiscard]] bool IsValid() const noexcept {
-		return (device_name != nullptr) && (format_string != nullptr);
+		return device_name.data() != nullptr && format_string.data() != nullptr;
 	}
-	[[nodiscard]] const char *GetURI() const noexcept {
+	[[nodiscard]] std::string_view GetURI() const noexcept {
 		return uri;
 	}
-	[[nodiscard]] const char *GetDeviceName() const noexcept {
+	[[nodiscard]] std::string_view GetDeviceName() const noexcept {
 		return device_name;
 	}
-	[[nodiscard]] const char *GetFormatString() const noexcept {
+	[[nodiscard]] std::string_view GetFormatString() const noexcept {
 		return format_string;
 	}
 	[[nodiscard]] AudioFormat GetAudioFormat() const noexcept {
@@ -195,11 +181,10 @@ AlsaInputStream::AlsaInputStream(EventLoop &_loop,
 	 defer_invalidate_sockets(_loop,
 				  BIND_THIS_METHOD(InvalidateSockets))
 {
-	OpenDevice(spec);
+	OpenDevice(spec.GetAudioFormat());
 
-	std::string mimestr = "audio/x-mpd-alsa-pcm;format=";
-	mimestr += spec.GetFormatString();
-	SetMimeType(mimestr.c_str());
+	SetMimeType(fmt::format("audio/x-mpd-alsa-pcm;format={}",
+				spec.GetFormatString()));
 
 	InputStream::SetReady();
 
@@ -209,11 +194,9 @@ AlsaInputStream::AlsaInputStream(EventLoop &_loop,
 }
 
 inline InputStreamPtr
-AlsaInputStream::Create(EventLoop &event_loop, const char *uri,
+AlsaInputStream::Create(EventLoop &event_loop, std::string_view uri,
 			Mutex &mutex)
 {
-	assert(uri != nullptr);
-
 	AlsaInputStream::SourceSpec spec(uri);
 	if (!spec.IsValidScheme())
 		return nullptr;
@@ -237,10 +220,10 @@ AlsaInputStream::DispatchSockets() noexcept
 try {
 	non_block.DispatchSockets(*this, capture_handle);
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	auto w = PrepareWriteBuffer();
-	const snd_pcm_uframes_t w_frames = w.size / frame_size;
+	const snd_pcm_uframes_t w_frames = w.size() / frame_size;
 	if (w_frames == 0) {
 		/* buffer is full */
 		Pause();
@@ -249,7 +232,7 @@ try {
 
 	snd_pcm_sframes_t n_frames;
 	while ((n_frames = snd_pcm_readi(capture_handle,
-					 w.data, w_frames)) < 0) {
+					 w.data(), w_frames)) < 0) {
 		if (n_frames == -EAGAIN)
 			return;
 
@@ -271,13 +254,13 @@ AlsaInputStream::Recover(int err)
 	switch(err) {
 	case -EPIPE:
 		FmtDebug(alsa_input_domain,
-			 "Overrun on ALSA capture device \"{}\"",
+			 "Overrun on ALSA capture device {:?}",
 			 device);
 		break;
 
 	case -ESTRPIPE:
 		FmtDebug(alsa_input_domain,
-			 "ALSA capture device \"{}\" was suspended",
+			 "ALSA capture device {:?} was suspended",
 			 device);
 		break;
 	}
@@ -292,9 +275,8 @@ AlsaInputStream::Recover(int err)
 		if (err == -EAGAIN)
 			return 0;
 		/* fall-through to snd_pcm_prepare: */
-#if CLANG_OR_GCC_VERSION(7,0)
 		[[fallthrough]];
-#endif
+
 	case SND_PCM_STATE_OPEN:
 	case SND_PCM_STATE_SETUP:
 	case SND_PCM_STATE_XRUN:
@@ -418,19 +400,19 @@ AlsaInputStream::ConfigureCapture(AudioFormat audio_format)
 }
 
 inline void
-AlsaInputStream::OpenDevice(const SourceSpec &spec)
+AlsaInputStream::OpenDevice(const AudioFormat &audio_format)
 {
 	int err;
 
-	if ((err = snd_pcm_open(&capture_handle, spec.GetDeviceName(),
+	if ((err = snd_pcm_open(&capture_handle, device.c_str(),
 				SND_PCM_STREAM_CAPTURE,
 				SND_PCM_NONBLOCK | global_config.mode)) < 0)
 		throw Alsa::MakeError(err,
-				      fmt::format("Failed to open device {}",
-						  spec.GetDeviceName()).c_str());
+				      FmtBuffer<256>("Failed to open device {}",
+						     device));
 
 	try {
-		ConfigureCapture(spec.GetAudioFormat());
+		ConfigureCapture(audio_format);
 	} catch (...) {
 		snd_pcm_close(capture_handle);
 		throw;
@@ -467,7 +449,7 @@ alsa_input_init(EventLoop &event_loop, const ConfigBlock &block)
 }
 
 static InputStreamPtr
-alsa_input_open(const char *uri, Mutex &mutex)
+alsa_input_open(std::string_view uri, Mutex &mutex)
 {
 	return AlsaInputStream::Create(*global_config.event_loop, uri,
 				       mutex);

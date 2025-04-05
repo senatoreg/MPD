@@ -1,37 +1,8 @@
-/*
- * Copyright 2007-2017 Content Management AG
- * All rights reserved.
- *
- * author: Max Kellermann <mk@cm4all.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright CM4all GmbH
+// author: Max Kellermann <mk@cm4all.com>
 
-#ifndef ODBUS_APPEND_ITER_HXX
-#define ODBUS_APPEND_ITER_HXX
+#pragma once
 
 #include "Iter.hxx"
 #include "Values.hxx"
@@ -79,6 +50,14 @@ public:
 		return AppendBasic(DBUS_TYPE_UINT64, &value);
 	}
 
+	AppendMessageIter &Append(const int32_t &value) {
+		return AppendBasic(DBUS_TYPE_INT32, &value);
+	}
+
+	AppendMessageIter &Append(const int64_t &value) {
+		return AppendBasic(DBUS_TYPE_INT64, &value);
+	}
+
 	AppendMessageIter &AppendFixedArray(int element_type,
 					    const void *value,
 					    int n_elements) {
@@ -89,12 +68,12 @@ public:
 		return *this;
 	}
 
-	AppendMessageIter &AppendFixedArray(ConstBuffer<uint32_t> value) {
+	AppendMessageIter &AppendFixedArray(std::span<const uint32_t> value) {
 		return AppendFixedArray(DBUS_TYPE_UINT32,
-					value.data, value.size);
+					value.data(), value.size());
 	}
 
-	AppendMessageIter &Append(ConstBuffer<uint32_t> value) {
+	AppendMessageIter &Append(std::span<const uint32_t> value) {
 		return AppendMessageIter(*this, DBUS_TYPE_ARRAY,
 					 DBUS_TYPE_UINT32_AS_STRING)
 			.AppendFixedArray(value)
@@ -207,5 +186,3 @@ public:
 };
 
 } /* namespace ODBus */
-
-#endif

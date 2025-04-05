@@ -1,43 +1,12 @@
-/*
- * Copyright (C) 2013-2017 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
-#ifndef MANUAL_HXX
-#define MANUAL_HXX
+#pragma once
 
 #include <cassert>
 #include <new>
+#include <type_traits>
 #include <utility>
-
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-#endif
 
 /**
  * Container for an object that gets constructed and destructed
@@ -47,16 +16,23 @@
  */
 template<class T>
 class Manual {
-	alignas(T)
-	char data[sizeof(T)];
+	using Storage = std::aligned_storage_t<sizeof(T), alignof(T)>;
+
+	Storage storage;
 
 #ifndef NDEBUG
 	bool initialized = false;
 #endif
 
 public:
+	using value_type = T;
+	using reference = T &;
+	using const_reference =  const T &;
+	using pointer = T *;
+	using const_pointer = const T *;
+
 #ifndef NDEBUG
-	~Manual() {
+	~Manual() noexcept {
 		assert(!initialized);
 	}
 #endif
@@ -64,7 +40,7 @@ public:
 	/**
 	 * Cast a value reference to the containing Manual instance.
 	 */
-	static constexpr Manual<T> &Cast(T &value) {
+	static constexpr Manual<T> &Cast(reference value) noexcept {
 		return reinterpret_cast<Manual<T> &>(value);
 	}
 
@@ -72,18 +48,17 @@ public:
 	void Construct(Args&&... args) {
 		assert(!initialized);
 
-		void *p = data;
-		new(p) T(std::forward<Args>(args)...);
+		::new(&storage) T(std::forward<Args>(args)...);
 
 #ifndef NDEBUG
 		initialized = true;
 #endif
 	}
 
-	void Destruct() {
+	void Destruct() noexcept {
 		assert(initialized);
 
-		T &t = Get();
+		reference t = Get();
 		t.T::~T();
 
 #ifndef NDEBUG
@@ -91,39 +66,31 @@ public:
 #endif
 	}
 
-	T &Get() {
+	reference Get() noexcept {
 		assert(initialized);
 
-		void *p = static_cast<void *>(data);
-		return *static_cast<T *>(p);
+		return *std::launder(reinterpret_cast<pointer>(&storage));
 	}
 
-	const T &Get() const {
+	const_reference Get() const noexcept {
 		assert(initialized);
 
-		const void *p = static_cast<const void *>(data);
-		return *static_cast<const T *>(p);
+		return *std::launder(reinterpret_cast<const_pointer>(&storage));
 	}
 
-	operator T &() {
+	operator reference() noexcept {
 		return Get();
 	}
 
-	operator const T &() const {
+	operator const_reference() const noexcept {
 		return Get();
 	}
 
-	T *operator->() {
+	pointer operator->() noexcept {
 		return &Get();
 	}
 
-	const T *operator->() const {
+	const_pointer operator->() const noexcept {
 		return &Get();
 	}
 };
-
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-
-#endif

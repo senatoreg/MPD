@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "SnapcastOutputPlugin.hxx"
 #include "Internal.hxx"
@@ -23,6 +7,7 @@
 #include "output/OutputAPI.hxx"
 #include "output/Features.h"
 #include "encoder/EncoderInterface.hxx"
+#include "encoder/EncoderPlugin.hxx"
 #include "encoder/Configured.hxx"
 #include "encoder/plugins/WaveEncoderPlugin.hxx"
 #include "net/UniqueSocketDescriptor.hxx"
@@ -30,6 +15,7 @@
 #include "event/Call.hxx"
 #include "util/Domain.hxx"
 #include "util/DeleteDisposer.hxx"
+#include "util/SpanCast.hxx"
 #include "config/Net.hxx"
 
 #ifdef HAVE_ZEROCONF
@@ -109,12 +95,12 @@ SnapcastOutput::AddClient(UniqueSocketDescriptor fd) noexcept
 
 void
 SnapcastOutput::OnAccept(UniqueSocketDescriptor fd,
-			 SocketAddress, int) noexcept
+			 SocketAddress) noexcept
 {
 	/* the listener socket has become readable - a client has
 	   connected */
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	/* can we allow additional client */
 	if (open)
@@ -122,26 +108,18 @@ SnapcastOutput::OnAccept(UniqueSocketDescriptor fd,
 }
 
 static AllocatedArray<std::byte>
-ReadEncoder(Encoder &encoder)
+ReadEncoder(Encoder &encoder) noexcept
 {
 	std::byte buffer[4096];
 
-	size_t nbytes = encoder.Read(buffer, sizeof(buffer));
-	const ConstBuffer<std::byte> src(buffer, nbytes);
-	return AllocatedArray<std::byte>{src};
+	return AllocatedArray<std::byte>{encoder.Read(std::span{buffer})};
 }
 
 inline void
 SnapcastOutput::OpenEncoder(AudioFormat &audio_format)
 {
 	encoder = prepared_encoder->Open(audio_format);
-
-	try {
-		codec_header = ReadEncoder(*encoder);
-	} catch (...) {
-		delete encoder;
-		throw;
-	}
+	codec_header = ReadEncoder(*encoder);
 
 	unflushed_input = 0;
 }
@@ -152,7 +130,7 @@ SnapcastOutput::Open(AudioFormat &audio_format)
 	assert(!open);
 	assert(clients.empty());
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	OpenEncoder(audio_format);
 
@@ -174,21 +152,21 @@ SnapcastOutput::Close() noexcept
 	BlockingCall(GetEventLoop(), [this](){
 		inject_event.Cancel();
 
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		open = false;
 		clients.clear_and_dispose(DeleteDisposer{});
 	});
 
 	ClearQueue(chunks);
 
-	codec_header = nullptr;
+	codec_header = std::span<const std::byte>{};
 	delete encoder;
 }
 
 void
 SnapcastOutput::OnInject() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	while (!chunks.empty()) {
 		const auto chunk = std::move(chunks.front());
@@ -276,8 +254,7 @@ ToJson(const Tag &tag) noexcept
 
 	gen.CloseMap();
 
-	const auto result = gen.GetBuffer();
-	return {(const char *)result.data, result.size};
+	return std::string{ToStringView(gen.GetBuffer())};
 }
 
 #endif
@@ -293,19 +270,19 @@ SnapcastOutput::SendTag(const Tag &tag)
 	if (json.empty())
 		return;
 
-	const ConstBuffer payload(json.data(), json.size());
+	const auto payload = std::as_bytes(std::span{json});
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 	// TODO: enqueue StreamTags, don't send directly
 	for (auto &client : clients)
-		client.SendStreamTags(payload.ToVoid());
+		client.SendStreamTags(payload);
 #else
 	(void)tag;
 #endif
 }
 
-size_t
-SnapcastOutput::Play(const void *chunk, size_t size)
+std::size_t
+SnapcastOutput::Play(std::span<const std::byte> src)
 {
 	pause = false;
 
@@ -313,13 +290,13 @@ SnapcastOutput::Play(const void *chunk, size_t size)
 
 	if (!timer->IsStarted())
 		timer->Start();
-	timer->Add(size);
+	timer->Add(src.size());
 
 	if (!LockHasClients())
-		return size;
+		return src.size();
 
-	encoder->Write(chunk, size);
-	unflushed_input += size;
+	encoder->Write(src);
+	unflushed_input += src.size();
 
 	if (unflushed_input >= 65536) {
 		/* we have fed a lot of input into the encoder, but it
@@ -337,21 +314,20 @@ SnapcastOutput::Play(const void *chunk, size_t size)
 	while (true) {
 		std::byte buffer[32768];
 
-		size_t nbytes = encoder->Read(buffer, sizeof(buffer));
-		if (nbytes == 0)
+		const auto payload = encoder->Read(std::span{buffer});
+		if (payload.empty())
 			break;
 
 		unflushed_input = 0;
 
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		if (chunks.empty())
 			inject_event.Schedule();
 
-		const ConstBuffer payload{buffer, nbytes};
 		chunks.push(std::make_shared<SnapcastChunk>(now, AllocatedArray{payload}));
 	}
 
-	return size;
+	return src.size();
 }
 
 bool
@@ -374,14 +350,14 @@ SnapcastOutput::IsDrained() const noexcept
 void
 SnapcastOutput::Drain()
 {
-	std::unique_lock<Mutex> protect(mutex);
+	std::unique_lock protect{mutex};
 	drain_cond.wait(protect, [this]{ return IsDrained(); });
 }
 
 void
 SnapcastOutput::Cancel() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	ClearQueue(chunks);
 

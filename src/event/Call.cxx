@@ -1,27 +1,10 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
 #include "Call.hxx"
 #include "Loop.hxx"
 #include "InjectEvent.hxx"
-#include "thread/Mutex.hxx"
-#include "thread/Cond.hxx"
+#include "thread/AsyncWaiter.hxx"
 
 #include <cassert>
 #include <exception>
@@ -32,45 +15,27 @@ class BlockingCallMonitor final
 
 	const std::function<void()> f;
 
-	Mutex mutex;
-	Cond cond;
-
-	bool done;
-
-	std::exception_ptr exception;
+	AsyncWaiter waiter;
 
 public:
-	BlockingCallMonitor(EventLoop &_loop, std::function<void()> &&_f)
+	BlockingCallMonitor(EventLoop &_loop,
+			    std::function<void()> &&_f) noexcept
 		:event(_loop, BIND_THIS_METHOD(RunDeferred)),
-		 f(std::move(_f)), done(false) {}
+		 f(std::move(_f)) {}
 
 	void Run() {
-		assert(!done);
-
 		event.Schedule();
-
-		{
-			std::unique_lock<Mutex> lock(mutex);
-			cond.wait(lock, [this]{ return done; });
-		}
-
-		if (exception)
-			std::rethrow_exception(exception);
+		waiter.Wait();
 	}
 
 private:
 	void RunDeferred() noexcept {
-		assert(!done);
-
 		try {
 			f();
+			waiter.SetDone();
 		} catch (...) {
-			exception = std::current_exception();
+			waiter.SetError(std::current_exception());
 		}
-
-		const std::scoped_lock<Mutex> lock(mutex);
-		done = true;
-		cond.notify_one();
 	}
 };
 

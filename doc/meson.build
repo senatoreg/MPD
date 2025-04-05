@@ -17,6 +17,7 @@ if get_option('html_manual')
       'client.rst',
       'protocol.rst',
       'conf.py',
+      '_static/css/custom.css'
     ],
     command: [sphinx, '-q', '-b', 'html', '-d', '@OUTDIR@/doctrees', meson.current_source_dir(), '@OUTPUT@'],
     build_by_default: true,
@@ -34,5 +35,24 @@ if get_option('manpages')
     build_by_default: true,
     install: true,
     install_dir: [join_paths(get_option('mandir'), 'man1'), join_paths(get_option('mandir'), 'man5')],
+  )
+endif
+
+if get_option('doxygen')
+
+  doxygen = find_program('doxygen', required: true)
+  conf_data = configuration_data()
+  conf_data.set('VERSION', meson.project_version())
+  conf_data.set('abs_top_srcdir', meson.source_root())
+  doxyfile = configure_file(
+    input: 'doxygen.conf.in',
+    output: 'Doxyfile',
+    configuration: conf_data
+  )
+  
+  custom_target('Doxygen',
+    command: [doxygen, doxyfile],
+    output: ['api'],
+    build_by_default: true
   )
 endif

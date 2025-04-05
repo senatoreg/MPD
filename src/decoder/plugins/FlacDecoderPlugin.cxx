@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "FlacDecoderPlugin.h"
 #include "FlacStreamDecoder.hxx"
@@ -29,10 +13,6 @@
 #include "fs/NarrowPath.hxx"
 #include "Log.hxx"
 
-#if !defined(FLAC_API_VERSION_CURRENT) || FLAC_API_VERSION_CURRENT <= 7
-#error libFLAC is too old
-#endif
-
 static void
 flacPrintErroredState(FLAC__StreamDecoderState state) noexcept
 {
@@ -42,6 +22,9 @@ flacPrintErroredState(FLAC__StreamDecoderState state) noexcept
 	case FLAC__STREAM_DECODER_SEARCH_FOR_FRAME_SYNC:
 	case FLAC__STREAM_DECODER_READ_FRAME:
 	case FLAC__STREAM_DECODER_END_OF_STREAM:
+#if FLAC_API_VERSION_CURRENT >= 14
+	case FLAC__STREAM_DECODER_END_OF_LINK:
+#endif
 		return;
 
 	case FLAC__STREAM_DECODER_OGG_ERROR:
@@ -72,7 +55,8 @@ flac_write_cb(const FLAC__StreamDecoder *dec, const FLAC__Frame *frame,
 }
 
 static bool
-flac_scan_file(Path path_fs, TagHandler &handler) noexcept {
+flac_scan_file(Path path_fs, TagHandler &handler) noexcept
+{
 	FlacMetadataChain chain;
 	const bool succeed = [&chain, &path_fs]() noexcept {
 		// read by NarrowPath
@@ -128,6 +112,12 @@ flac_decoder_new() noexcept
 		LogDebug(flac_domain,
 			 "FLAC__stream_decoder_set_metadata_respond() has failed");
 
+#if FLAC_API_VERSION_CURRENT >= 14
+	if (!FLAC__stream_decoder_set_decode_chained_stream(sd.get(), true))
+		LogDebug(flac_domain,
+			 "FLAC__stream_decoder_set_decode_chained_stream() has failed");
+#endif
+
 	return sd;
 }
 
@@ -171,11 +161,9 @@ FlacSubmitToClient(DecoderClient &client, FlacDecoder &d) noexcept
 	}
 
 	if (!d.chunk.empty()) {
-		auto cmd = client.SubmitData(d.GetInputStream(),
-					     d.chunk.data,
-					     d.chunk.size,
-					     d.kbit_rate);
-		d.chunk = nullptr;
+		auto cmd = client.SubmitAudio(d.GetInputStream(), d.chunk,
+					      d.kbit_rate);
+		d.chunk = {};
 		if (cmd != DecoderCommand::NONE)
 			return cmd;
 	}
@@ -237,6 +225,16 @@ flac_decoder_loop(FlacDecoder *data, FLAC__StreamDecoder *flac_dec)
 		case FLAC__STREAM_DECODER_UNINITIALIZED:
 			/* we shouldn't see this, ever - bail out */
 			return;
+
+#if FLAC_API_VERSION_CURRENT >= 14
+		case FLAC__STREAM_DECODER_END_OF_LINK:
+			if (!FLAC__stream_decoder_finish_link(flac_dec)) {
+				LogError(flac_domain, "FLAC__stream_decoder_finish_link() failed");
+				return;
+			}
+
+			break;
+#endif
 		}
 
 		if (!FLAC__stream_decoder_process_single(flac_dec) &&

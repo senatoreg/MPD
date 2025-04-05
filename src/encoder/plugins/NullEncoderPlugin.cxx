@@ -1,42 +1,24 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "NullEncoderPlugin.hxx"
 #include "../EncoderAPI.hxx"
 #include "util/DynamicFifoBuffer.hxx"
-#include "util/Compiler.h"
 
 class NullEncoder final : public Encoder {
-	DynamicFifoBuffer<uint8_t> buffer;
+	DynamicFifoBuffer<std::byte> buffer{8192};
 
 public:
 	NullEncoder()
-		:Encoder(false),
-		 buffer(8192) {}
+		:Encoder(false) {}
 
 	/* virtual methods from class Encoder */
-	void Write(const void *data, size_t length) override {
-		buffer.Append((const uint8_t *)data, length);
+	void Write(std::span<const std::byte> src) override {
+		buffer.Append(src);
 	}
 
-	size_t Read(void *dest, size_t length) override {
-		return buffer.Read((uint8_t *)dest, length);
+	std::span<const std::byte> Read(std::span<std::byte> b) noexcept override {
+		return b.first(buffer.Read(b.data(), b.size()));
 	}
 };
 

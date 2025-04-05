@@ -1,29 +1,14 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "Partition.hxx"
 #include "Instance.hxx"
 #include "Log.hxx"
+#include "config/PartitionConfig.hxx"
 #include "lib/fmt/ExceptionFormatter.hxx"
 #include "song/DetachedSong.hxx"
-#include "IdleFlags.hxx"
+#include "protocol/IdleFlags.hxx"
 #include "client/Listener.hxx"
 #include "client/Client.hxx"
 #include "input/cache/Manager.hxx"
@@ -33,21 +18,18 @@ static constexpr Domain cache_domain("cache");
 
 Partition::Partition(Instance &_instance,
 		     const char *_name,
-		     unsigned max_length,
-		     unsigned buffer_chunks,
-		     AudioFormat configured_audio_format,
-		     const ReplayGainConfig &replay_gain_config) noexcept
+		     const PartitionConfig &_config) noexcept
 	:instance(_instance),
 	 name(_name),
+	 config(_config),
 	 listener(new ClientListener(instance.event_loop, *this)),
 	 idle_monitor(instance.event_loop, BIND_THIS_METHOD(OnIdleMonitor)),
 	 global_events(instance.event_loop, BIND_THIS_METHOD(OnGlobalEvent)),
-	 playlist(max_length, *this),
+	 playlist(config.queue.max_length, *this),
 	 outputs(pc, *this),
 	 pc(*this, outputs,
 	    instance.input_cache.get(),
-	    buffer_chunks,
-	    configured_audio_format, replay_gain_config)
+	    config.player)
 {
 	UpdateEffectiveReplayGainMode();
 }
@@ -67,13 +49,13 @@ PrefetchSong(InputCacheManager &cache, const char *uri) noexcept
 	if (cache.Contains(uri))
 		return;
 
-	FmtDebug(cache_domain, "Prefetch '{}'", uri);
+	FmtDebug(cache_domain, "Prefetch {:?}", uri);
 
 	try {
 		cache.Prefetch(uri);
 	} catch (...) {
 		FmtError(cache_domain,
-			 "Prefetch '{}' failed: {}",
+			 "Prefetch {:?} failed: {}",
 			 uri, std::current_exception());
 	}
 }
@@ -185,6 +167,24 @@ Partition::OnQueueSongStarted() noexcept
 }
 
 void
+Partition::OnPlayerError() noexcept
+{
+	EmitIdle(IDLE_PLAYER);
+}
+
+void
+Partition::OnPlayerStateChanged() noexcept
+{
+	EmitIdle(IDLE_PLAYER);
+}
+
+void
+Partition::OnPlayerOptionsChanged() noexcept
+{
+	EmitIdle(IDLE_OPTIONS);
+}
+
+void
 Partition::OnPlayerSync() noexcept
 {
 	EmitGlobalEvent(SYNC_WITH_PLAYER);
@@ -194,6 +194,10 @@ void
 Partition::OnPlayerTagModified() noexcept
 {
 	EmitGlobalEvent(TAG_MODIFIED);
+
+	/* notify all clients that the tag of the current song has
+	   changed */
+	EmitIdle(IDLE_PLAYER);
 }
 
 void
@@ -207,6 +211,13 @@ Partition::OnMixerVolumeChanged(Mixer &, int) noexcept
 {
 	mixer_memento.InvalidateHardwareVolume();
 
+	/* notify clients */
+	EmitIdle(IDLE_MIXER);
+}
+
+void
+Partition::OnMixerChanged() noexcept
+{
 	/* notify clients */
 	EmitIdle(IDLE_MIXER);
 }

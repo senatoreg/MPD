@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef AUDIO_OUTPUT_SOURCE_HXX
 #define AUDIO_OUTPUT_SOURCE_HXX
@@ -26,11 +10,11 @@
 #include "pcm/Buffer.hxx"
 #include "pcm/Dither.hxx"
 #include "thread/Mutex.hxx"
-#include "util/ConstBuffer.hxx"
 
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 
 struct MusicChunk;
@@ -115,7 +99,16 @@ class AudioOutputSource {
 	 * Filtered #MusicChunk PCM data to be processed by the
 	 * #AudioOutput.
 	 */
-	ConstBuffer<uint8_t> pending_data;
+	std::span<const std::byte> pending_data;
+
+	/**
+	 * Has #filter been flushed?  If true, then no method calls
+	 * (other than Flush()) are allowed on this #Filter according
+	 * to the API definition.
+	 *
+	 * This field is only initialized if #filter is not nullptr.
+	 */
+	bool filter_flushed;
 
 public:
 	AudioOutputSource() noexcept;
@@ -174,8 +167,8 @@ public:
 	 * Be sure to call Fill() successfully before calling this
 	 * metohd.
 	 */
-	ConstBuffer<void> PeekData() const noexcept {
-		return pending_data.ToVoid();
+	std::span<const std::byte> PeekData() const noexcept {
+		return pending_data;
 	}
 
 	/**
@@ -196,7 +189,7 @@ public:
 	/**
 	 * Wrapper for Filter::Flush().
 	 */
-	ConstBuffer<void> Flush();
+	std::span<const std::byte> Flush();
 
 private:
 	void OpenFilter(AudioFormat audio_format,
@@ -206,11 +199,11 @@ private:
 
 	void CloseFilter() noexcept;
 
-	ConstBuffer<void> GetChunkData(const MusicChunk &chunk,
-				       Filter *replay_gain_filter,
-				       unsigned *replay_gain_serial_p);
+	std::span<const std::byte> GetChunkData(const MusicChunk &chunk,
+						Filter *replay_gain_filter,
+						unsigned *replay_gain_serial_p);
 
-	ConstBuffer<void> FilterChunk(const MusicChunk &chunk);
+	std::span<const std::byte> FilterChunk(const MusicChunk &chunk);
 
 	void DropCurrentChunk() noexcept {
 		assert(current_chunk != nullptr);

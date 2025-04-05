@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Traits.hxx"
 #include "util/StringCompare.hxx"
@@ -137,17 +121,15 @@ RelativePathImpl(typename Traits::string_view base,
 template<typename Traits>
 typename Traits::string_view
 RelativePathImpl(typename Traits::string_view base,
-		 typename Traits::string_view _other) noexcept
+		 typename Traits::string_view other) noexcept
 {
-	BasicStringView<typename Traits::value_type> other(_other);
-
-	if (!other.SkipPrefix(base))
+	if (!SkipPrefix(other, base))
 		/* mismatch */
 		return {};
 
 	if (!other.empty()) {
 		if (!Traits::IsSeparator(other.front())) {
-			if (!base.empty() && Traits::IsSeparator(other.data[-1]))
+			if (!base.empty() && Traits::IsSeparator(other.data()[-1]))
 				/* "other" has no more slash, but the
 				   matching base ended with a slash:
 				   enough to detect a match */
@@ -159,7 +141,7 @@ RelativePathImpl(typename Traits::string_view base,
 
 		/* skip remaining path separators */
 		while (!other.empty() && Traits::IsSeparator(other.front()))
-			other.pop_front();
+			other.remove_prefix(1);
 	}
 
 	return other;

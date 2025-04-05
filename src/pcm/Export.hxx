@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef PCM_EXPORT_HXX
 #define PCM_EXPORT_HXX
@@ -30,9 +14,9 @@
 #include "Dop.hxx"
 #endif
 
+#include <cstddef>
 #include <cstdint>
-
-template<typename T> struct ConstBuffer;
+#include <span>
 
 /**
  * An object that handles export of PCM samples to some instance
@@ -80,7 +64,7 @@ class PcmExport {
 
 	size_t silence_size;
 
-	uint8_t silence_buffer[64]; /* worst-case size */
+	std::byte silence_buffer[64]; /* worst-case size */
 
 	/**
 	 * The sample format of input data.
@@ -227,7 +211,7 @@ public:
 	 * this #PcmExport object exists and until the next Open()
 	 * call
 	 */
-	ConstBuffer<void> GetSilence() const noexcept;
+	std::span<const std::byte> GetSilence() const noexcept;
 
 	/**
 	 * Export a PCM buffer.
@@ -236,7 +220,7 @@ public:
 	 * @return the destination buffer; may be empty (and may be a
 	 * pointer to the source buffer)
 	 */
-	ConstBuffer<void> Export(ConstBuffer<void> src) noexcept;
+	std::span<const std::byte> Export(std::span<const std::byte> src) noexcept;
 
 	/**
 	 * Converts the number of consumed bytes from the Export()

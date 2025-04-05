@@ -1,24 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "OpusEncoderPlugin.hxx"
 #include "OggEncoder.hxx"
+#include "tag/Names.hxx"
 #include "pcm/AudioFormat.hxx"
 #include "util/ByteOrder.hxx"
 #include "util/StringUtil.hxx"
@@ -40,7 +25,7 @@ class OpusEncoder final : public OggEncoder {
 
 	const size_t buffer_frames, buffer_size;
 	size_t buffer_position = 0;
-	uint8_t *const buffer;
+	std::byte *const buffer;
 
 	::OpusEncoder *const enc;
 
@@ -61,7 +46,7 @@ public:
 
 	/* virtual methods from class Encoder */
 	void End() override;
-	void Write(const void *data, size_t length) override;
+	void Write(std::span<const std::byte> src) override;
 
 	void PreTag() override;
 	void SendTag(const Tag &tag) override;
@@ -155,7 +140,7 @@ OpusEncoder::OpusEncoder(AudioFormat &_audio_format, ::OpusEncoder *_enc, bool _
 	 frame_size(_audio_format.GetFrameSize()),
 	 buffer_frames(_audio_format.sample_rate / 50),
 	 buffer_size(frame_size * buffer_frames),
-	 buffer(new uint8_t[buffer_size]),
+	 buffer(new std::byte[buffer_size]),
 	 enc(_enc)
 {
 	opus_encoder_ctl(enc, OPUS_GET_LOOKAHEAD(&lookahead));
@@ -272,10 +257,8 @@ OpusEncoder::WriteSilence(unsigned fill_frames)
 }
 
 void
-OpusEncoder::Write(const void *_data, size_t length)
+OpusEncoder::Write(std::span<const std::byte> src)
 {
-	const auto *data = (const uint8_t *)_data;
-
 	if (lookahead > 0) {
 		/* generate some silence at the beginning of the
 		   stream */
@@ -286,14 +269,12 @@ OpusEncoder::Write(const void *_data, size_t length)
 		lookahead = 0;
 	}
 
-	while (length > 0) {
-		size_t nbytes = buffer_size - buffer_position;
-		if (nbytes > length)
-			nbytes = length;
+	while (!src.empty()) {
+		const std::size_t nbytes = std::min(buffer_size - buffer_position,
+						    src.size());
 
-		memcpy(buffer + buffer_position, data, nbytes);
-		data += nbytes;
-		length -= nbytes;
+		memcpy(buffer + buffer_position, src.data(), nbytes);
+		src = src.subspan(nbytes);
 		buffer_position += nbytes;
 
 		if (buffer_position == buffer_size)

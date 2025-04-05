@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "SoundCloudPlaylistPlugin.hxx"
 #include "../PlaylistPlugin.hxx"
@@ -66,11 +50,11 @@ soundcloud_init(const ConfigBlock &block)
  * @return Constructed URL. Must be freed with free().
  */
 static AllocatedString
-soundcloud_resolve(StringView uri) noexcept
+soundcloud_resolve(std::string_view uri) noexcept
 {
-	if (uri.StartsWithIgnoreCase("https://")) {
+	if (StringStartsWithIgnoreCase(uri, "https://"sv)) {
 		return AllocatedString{uri};
-	} else if (uri.StartsWith("soundcloud.com")) {
+	} else if (uri.starts_with("soundcloud.com"sv)) {
 		return AllocatedString{"https://"sv, uri};
 	}
 
@@ -86,33 +70,33 @@ soundcloud_resolve(StringView uri) noexcept
 }
 
 static AllocatedString
-TranslateSoundCloudUri(StringView uri) noexcept
+TranslateSoundCloudUri(std::string_view uri) noexcept
 {
-	if (uri.SkipPrefix("track/"sv)) {
+	if (SkipPrefix(uri, "track/"sv)) {
 		return AllocatedString{
 			"https://api.soundcloud.com/tracks/"sv,
 			uri, ".json?client_id="sv,
 			soundcloud_config.apikey,
 		};
-	} else if (uri.SkipPrefix("playlist/"sv)) {
+	} else if (SkipPrefix(uri, "playlist/"sv)) {
 		return AllocatedString{
 			"https://api.soundcloud.com/playlists/"sv,
 			uri, ".json?client_id="sv,
 			soundcloud_config.apikey,
 		};
-	} else if (uri.SkipPrefix("user/"sv)) {
+	} else if (SkipPrefix(uri, "user/"sv)) {
 		return AllocatedString{
 			"https://api.soundcloud.com/users/"sv,
 			uri, "/tracks.json?client_id="sv,
 			soundcloud_config.apikey,
 		};
-	} else if (uri.SkipPrefix("search/"sv)) {
+	} else if (SkipPrefix(uri, "search/"sv)) {
 		return AllocatedString{
 			"https://api.soundcloud.com/tracks.json?q="sv,
 			uri, "&client_id="sv,
 			soundcloud_config.apikey,
 		};
-	} else if (uri.SkipPrefix("url/"sv)) {
+	} else if (SkipPrefix(uri, "url/"sv)) {
 		/* Translate to soundcloud resolver call. libcurl will automatically
 		   follow the redirect to the right resource. */
 		return soundcloud_resolve(uri);
@@ -146,9 +130,9 @@ struct SoundCloudJsonData {
 	std::forward_list<DetachedSong> songs;
 
 	bool Integer(long long value) noexcept;
-	bool String(StringView value) noexcept;
+	bool String(std::string_view value) noexcept;
 	bool StartMap() noexcept;
-	bool MapKey(StringView value) noexcept;
+	bool MapKey(std::string_view value) noexcept;
 	bool EndMap() noexcept;
 };
 
@@ -167,15 +151,15 @@ SoundCloudJsonData::Integer(long long intval) noexcept
 }
 
 inline bool
-SoundCloudJsonData::String(StringView value) noexcept
+SoundCloudJsonData::String(std::string_view value) noexcept
 {
 	switch (key) {
 	case SoundCloudJsonData::Key::TITLE:
-		title.assign(value.data, value.size);
+		title = value;
 		break;
 
 	case SoundCloudJsonData::Key::STREAM_URL:
-		stream_url.assign(value.data, value.size);
+		stream_url = value;
 		got_url = 1;
 		break;
 
@@ -187,7 +171,7 @@ SoundCloudJsonData::String(StringView value) noexcept
 }
 
 inline bool
-SoundCloudJsonData::MapKey(StringView value) noexcept
+SoundCloudJsonData::MapKey(std::string_view value) noexcept
 {
 	const auto *i = key_str;
 	while (*i != nullptr && !StringStartsWith(*i, value))
@@ -226,7 +210,7 @@ SoundCloudJsonData::EndMap() noexcept
 	TagBuilder tag;
 	tag.SetDuration(SignedSongTime::FromMS(duration));
 	if (!title.empty())
-		tag.AddItem(TAG_NAME, title.c_str());
+		tag.AddItem(TAG_NAME, title);
 
 	songs.emplace_front(u.c_str(), tag.Commit());
 

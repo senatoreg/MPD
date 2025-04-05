@@ -1,29 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 /** \file
  *
  * Internal declarations for the "httpd" audio output plugin.
  */
 
-#ifndef MPD_OUTPUT_HTTPD_INTERNAL_H
-#define MPD_OUTPUT_HTTPD_INTERNAL_H
+#pragma once
 
 #include "HttpdClient.hxx"
 #include "output/Interface.hxx"
@@ -33,13 +16,12 @@
 #include "event/ServerSocket.hxx"
 #include "event/InjectEvent.hxx"
 #include "util/Cast.hxx"
-#include "util/Compiler.h"
-
-#include <boost/intrusive/list.hpp>
+#include "util/IntrusiveList.hxx"
 
 #include <queue>
 #include <list>
 #include <memory>
+#include <span>
 
 struct ConfigBlock;
 class EventLoop;
@@ -121,33 +103,31 @@ private:
 	/**
 	 * The configured name.
 	 */
-	char const *name;
+	char const *const name;
+
 	/**
 	 * The configured genre.
 	 */
-	char const *genre;
+	char const *const genre;
+
 	/**
 	 * The configured website address.
 	 */
-	char const *website;
+	char const *const website;
 
 private:
 	/**
 	 * A linked list containing all clients which are currently
 	 * connected.
 	 */
-	boost::intrusive::list<HttpdClient,
-			       boost::intrusive::constant_time_size<true>> clients;
-
-	/**
-	 * A temporary buffer for the ReadPage() function.
-	 */
-	std::byte buffer[32768];
+	IntrusiveList<
+		HttpdClient, IntrusiveListBaseHookTraits<HttpdClient>,
+		IntrusiveListOptions{.constant_time_size = true}> clients;
 
 	/**
 	 * The maximum number of clients connected at the same time.
 	 */
-	unsigned clients_max;
+	const unsigned clients_max;
 
 public:
 	HttpdOutput(EventLoop &_loop, const ConfigBlock &block);
@@ -192,7 +172,7 @@ public:
 	 *
 	 * Caller must lock the mutex.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool HasClients() const noexcept {
 		return !clients.empty();
 	}
@@ -200,9 +180,9 @@ public:
 	/**
 	 * Check whether there is at least one client.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool LockHasClients() const noexcept {
-		const std::scoped_lock<Mutex> protect(mutex);
+		const std::scoped_lock protect{mutex};
 		return HasClients();
 	}
 
@@ -224,14 +204,14 @@ public:
 	 */
 	void SendHeader(HttpdClient &client) const noexcept;
 
-	gcc_pure
+	[[gnu::pure]]
 	std::chrono::steady_clock::duration Delay() const noexcept override;
 
 	/**
 	 * Reads data from the encoder (as much as available) and
 	 * returns it as a new #page object.
 	 */
-	PagePtr ReadPage();
+	PagePtr ReadPage() noexcept;
 
 	/**
 	 * Broadcasts a page struct to all clients.
@@ -245,18 +225,18 @@ public:
 	 *
 	 * Mutext must not be locked.
 	 */
-	void BroadcastFromEncoder();
+	void BroadcastFromEncoder() noexcept;
 
 	/**
 	 * Mutext must not be locked.
 	 *
 	 * Throws on error.
 	 */
-	void EncodeAndPlay(const void *chunk, size_t size);
+	void EncodeAndPlay(std::span<const std::byte> src);
 
 	void SendTag(const Tag &tag) override;
 
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 
 	/**
 	 * Mutext must not be locked.
@@ -271,9 +251,7 @@ private:
 	void OnDeferredBroadcast() noexcept;
 
 	void OnAccept(UniqueSocketDescriptor fd,
-		      SocketAddress address, int uid) noexcept override;
+		      SocketAddress address) noexcept override;
 };
 
 extern const class Domain httpd_output_domain;
-
-#endif

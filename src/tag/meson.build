@@ -1,7 +1,7 @@
 generate_parse_name = executable(
   'GenParseName',
   'GenParseName.cxx',
-  'Names.c',
+  'Names.cxx',
   native: true,
 )
 
@@ -18,16 +18,18 @@ tag_sources = [
   'Builder.cxx',
   'Handler.cxx',
   'Settings.cxx',
+  'Sort.cxx',
   'Config.cxx',
   'ParseName.cxx',
   parse_name_cxx,
-  'Names.c',
+  'Names.cxx',
   'FixString.cxx',
   'Pool.cxx',
   'Table.cxx',
   'Format.cxx',
   'VorbisComment.cxx',
-  'ReplayGain.cxx',
+  'ReplayGainInfo.cxx',
+  'ReplayGainParser.cxx',
   'MixRampParser.cxx',
   'Generic.cxx',
   'Id3MusicBrainz.cxx',
@@ -56,6 +58,7 @@ tag = static_library(
   tag_sources,
   include_directories: inc,
   dependencies: [
+    fmt_dep,
     libid3tag_dep,
   ],
 )

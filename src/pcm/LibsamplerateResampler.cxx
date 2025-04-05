@@ -1,27 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "LibsamplerateResampler.hxx"
 #include "config/Block.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "util/ASCII.hxx"
-#include "util/RuntimeError.hxx"
 #include "util/Domain.hxx"
+#include "util/SpanCast.hxx"
 #include "Log.hxx"
 
 #include <cassert>
@@ -68,11 +53,11 @@ pcm_resample_lsr_global_init(const ConfigBlock &block)
 {
 	const char *converter = block.GetBlockValue("type", "2");
 	if (!lsr_parse_converter(converter))
-		throw FormatRuntimeError("unknown samplerate converter '%s'",
-					 converter);
+		throw FmtRuntimeError("unknown samplerate converter {:?}",
+				      converter);
 
 	FmtDebug(libsamplerate_domain,
-		 "libsamplerate converter '{}'",
+		 "libsamplerate converter {:?}",
 		 src_get_name(lsr_converter));
 }
 
@@ -92,8 +77,8 @@ LibsampleratePcmResampler::Open(AudioFormat &af, unsigned new_sample_rate)
 	int src_error;
 	state = src_new(lsr_converter, channels, &src_error);
 	if (!state)
-		throw FormatRuntimeError("libsamplerate initialization has failed: %s",
-					 src_strerror(src_error));
+		throw FmtRuntimeError("libsamplerate initialization has failed: {}",
+				      src_strerror(src_error));
 
 	memset(&data, 0, sizeof(data));
 
@@ -120,31 +105,31 @@ LibsampleratePcmResampler::Reset() noexcept
 	src_reset(state);
 }
 
-inline ConstBuffer<float>
-LibsampleratePcmResampler::Resample2(ConstBuffer<float> src)
+inline std::span<const float>
+LibsampleratePcmResampler::Resample2(std::span<const float> src)
 {
-	assert(src.size % channels == 0);
+	assert(src.size() % channels == 0);
 
-	const unsigned src_frames = src.size / channels;
+	const unsigned src_frames = src.size() / channels;
 	const unsigned dest_frames =
 		(src_frames * dest_rate + src_rate - 1) / src_rate;
 	size_t data_out_size = dest_frames * sizeof(float) * channels;
 
-	data.data_in = const_cast<float *>(src.data);
+	data.data_in = const_cast<float *>(src.data());
 	data.data_out = (float *)buffer.Get(data_out_size);
 	data.input_frames = src_frames;
 	data.output_frames = dest_frames;
 
 	int result = src_process(state, &data);
 	if (result != 0)
-		throw FormatRuntimeError("libsamplerate has failed: %s",
-					 src_strerror(result));
+		throw FmtRuntimeError("libsamplerate has failed: {}",
+				      src_strerror(result));
 
 	return {data.data_out, size_t(data.output_frames_gen * channels)};
 }
 
-ConstBuffer<void>
-LibsampleratePcmResampler::Resample(ConstBuffer<void> src)
+std::span<const std::byte>
+LibsampleratePcmResampler::Resample(std::span<const std::byte> src)
 {
-	return Resample2(ConstBuffer<float>::FromVoid(src)).ToVoid();
+	return std::as_bytes(Resample2(FromBytesStrict<const float>(src)));
 }

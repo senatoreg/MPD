@@ -1,27 +1,11 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "CrossFade.hxx"
 #include "Chrono.hxx"
 #include "MusicChunk.hxx"
 #include "pcm/AudioFormat.hxx"
-#include "util/NumberParser.hxx"
+#include "util/CNumberParser.hxx"
 #include "util/Domain.hxx"
 #include "util/Math.hxx"
 #include "Log.hxx"
@@ -38,7 +22,7 @@ CrossFadeSettings::CanCrossFadeSong(SignedSongTime total_time) const noexcept
 		duration < std::chrono::duration_cast<FloatDuration>(total_time);
 }
 
-gcc_pure
+[[gnu::pure]]
 static FloatDuration
 mixramp_interpolate(const char *ramp_list, float required_db) noexcept
 {
@@ -94,23 +78,28 @@ mixramp_interpolate(const char *ramp_list, float required_db) noexcept
 	return FloatDuration(-1);
 }
 
+bool
+CrossFadeSettings::CanCrossFade(SignedSongTime current_total_time,
+				SignedSongTime next_total_time,
+				AudioFormat af,
+				AudioFormat old_format) const noexcept
+{
+	return IsEnabled() &&
+		CanCrossFadeSong(current_total_time) &&
+		CanCrossFadeSong(next_total_time) &&
+		/* we can't crossfade when the audio formats are different */
+		af == old_format;
+}
+
 unsigned
-CrossFadeSettings::Calculate(SignedSongTime current_total_time,
-			     SignedSongTime next_total_time,
-			     float replay_gain_db, float replay_gain_prev_db,
+CrossFadeSettings::Calculate(float replay_gain_db, float replay_gain_prev_db,
 			     const char *mixramp_start, const char *mixramp_prev_end,
 			     const AudioFormat af,
-			     const AudioFormat old_format,
 			     unsigned max_chunks) const noexcept
 {
-	unsigned int chunks = 0;
+	assert(IsEnabled());
 
-	if (!IsEnabled() ||
-	    !CanCrossFadeSong(current_total_time) ||
-	    !CanCrossFadeSong(next_total_time) ||
-	    /* we can't crossfade when the audio formats are different */
-	    af != old_format)
-		return 0;
+	unsigned int chunks = 0;
 
 	assert(duration > FloatDuration::zero());
 	assert(af.IsValid());
@@ -118,7 +107,7 @@ CrossFadeSettings::Calculate(SignedSongTime current_total_time,
 	const auto chunk_duration =
 		af.SizeToTime<FloatDuration>(sizeof(MusicChunk::data));
 
-	if (mixramp_delay <= FloatDuration::zero() ||
+	if (!IsMixRampEnabled() ||
 	    !mixramp_start || !mixramp_prev_end) {
 		chunks = lround(duration / chunk_duration);
 	} else {

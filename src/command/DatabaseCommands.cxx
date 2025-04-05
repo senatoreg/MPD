@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "DatabaseCommands.hxx"
 #include "PositionArg.hxx"
@@ -29,8 +13,8 @@
 #include "protocol/RangeArg.hxx"
 #include "client/Client.hxx"
 #include "client/Response.hxx"
+#include "tag/Names.hxx"
 #include "tag/ParseName.hxx"
-#include "util/ConstBuffer.hxx"
 #include "util/Exception.hxx"
 #include "util/StringAPI.hxx"
 #include "util/ASCII.hxx"
@@ -67,6 +51,9 @@ ParseSortTag(const char *s)
 	if (StringIsEqualIgnoreCase(s, "Last-Modified"))
 		return TagType(SORT_TAG_LAST_MODIFIED);
 
+	if (StringIsEqualIgnoreCase(s, "Added"))
+		return TagType(SORT_TAG_ADDED);
+
 	TagType tag = tag_name_parse_i(s);
 	if (tag == TAG_NUM_OF_ITEM_TYPES)
 		throw ProtocolError(ACK_ERROR_ARG, "Unknown sort tag");
@@ -77,8 +64,8 @@ ParseSortTag(const char *s)
 static unsigned
 ParseQueuePosition(Request &args, unsigned queue_length)
 {
-	if (args.size >= 2 && StringIsEqual(args[args.size - 2], "position")) {
-		unsigned position = args.ParseUnsigned(args.size - 1,
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "position")) {
+		unsigned position = args.ParseUnsigned(args.size() - 1,
 						       queue_length);
 		args.pop_back();
 		args.pop_back();
@@ -92,7 +79,7 @@ ParseQueuePosition(Request &args, unsigned queue_length)
 static unsigned
 ParseInsertPosition(Request &args, const playlist &playlist)
 {
-	if (args.size >= 2 && StringIsEqual(args[args.size - 2], "position")) {
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "position")) {
 		unsigned position = ParseInsertPosition(args.back(), playlist);
 		args.pop_back();
 		args.pop_back();
@@ -112,8 +99,8 @@ static DatabaseSelection
 ParseDatabaseSelection(Request args, bool fold_case, SongFilter &filter)
 {
 	RangeArg window = RangeArg::All();
-	if (args.size >= 2 && StringIsEqual(args[args.size - 2], "window")) {
-		window = args.ParseRange(args.size - 1);
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "window")) {
+		window = args.ParseRange(args.size() - 1);
 
 		args.pop_back();
 		args.pop_back();
@@ -121,7 +108,7 @@ ParseDatabaseSelection(Request args, bool fold_case, SongFilter &filter)
 
 	TagType sort = TAG_NUM_OF_ITEM_TYPES;
 	bool descending = false;
-	if (args.size >= 2 && StringIsEqual(args[args.size - 2], "sort")) {
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "sort")) {
 		const char *s = args.back();
 		if (*s == '-') {
 			descending = true;
@@ -234,12 +221,12 @@ handle_searchaddpl(Client &client, Request args, Response &)
 	return CommandResult::OK;
 }
 
-CommandResult
-handle_count(Client &client, Request args, Response &r)
+static CommandResult
+handle_count_internal(Client &client, Request args, Response &r, bool fold_case)
 {
 	TagType group = TAG_NUM_OF_ITEM_TYPES;
-	if (args.size >= 2 && StringIsEqual(args[args.size - 2], "group")) {
-		const char *s = args[args.size - 1];
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "group")) {
+		const char *s = args[args.size() - 1];
 		group = tag_name_parse_i(s);
 		if (group == TAG_NUM_OF_ITEM_TYPES) {
 			r.FmtError(ACK_ERROR_ARG,
@@ -254,7 +241,7 @@ handle_count(Client &client, Request args, Response &r)
 	SongFilter filter;
 	if (!args.empty()) {
 		try {
-			filter.Parse(args, false);
+			filter.Parse(args, fold_case);
 		} catch (...) {
 			r.Error(ACK_ERROR_ARG,
 				GetFullMessage(std::current_exception()).c_str());
@@ -266,6 +253,18 @@ handle_count(Client &client, Request args, Response &r)
 
 	PrintSongCount(r, client.GetPartition(), "", &filter, group);
 	return CommandResult::OK;
+}
+
+CommandResult
+handle_count(Client &client, Request args, Response &r)
+{
+	return handle_count_internal(client, args, r, false);
+}
+
+CommandResult
+handle_searchcount(Client &client, Request args, Response &r)
+{
+	return handle_count_internal(client, args, r, true);
 }
 
 CommandResult
@@ -319,14 +318,14 @@ handle_list(Client &client, Request args, Response &r)
 	std::unique_ptr<SongFilter> filter;
 	std::vector<TagType> tag_types;
 
-	if (args.size == 1 &&
+	if (args.size() == 1 &&
 	    /* parantheses are the syntax for filter expressions: no
 	       compatibility mode */
 	    args.front()[0] != '(') {
 		/* for compatibility with < 0.12.0 */
 		if (tagType != TAG_ALBUM) {
 			r.FmtError(ACK_ERROR_ARG,
-				   "should be \"{}\" for 3 arguments",
+				   "should be {:?} for 3 arguments",
 				   tag_item_names[TAG_ALBUM]);
 			return CommandResult::ERROR;
 		}
@@ -335,9 +334,9 @@ handle_list(Client &client, Request args, Response &r)
 					    args.shift());
 	}
 
-	while (args.size >= 2 &&
-	       StringIsEqual(args[args.size - 2], "group")) {
-		const char *s = args[args.size - 1];
+	while (args.size() >= 2 &&
+	       StringIsEqual(args[args.size() - 2], "group")) {
+		const char *s = args[args.size() - 1];
 		const auto group = tag_name_parse_i(s);
 		if (group == TAG_NUM_OF_ITEM_TYPES) {
 			r.FmtError(ACK_ERROR_ARG,

@@ -11,8 +11,9 @@
 /libmpdclient/
 /libnpupnp-*/
 /libogg-*/
-/liburing-*/
+/libsndfile-*/
 /libvorbis-*/
+/liburing-*/
 /openssl-*/
 /opus-*/
 /sqlite-*/

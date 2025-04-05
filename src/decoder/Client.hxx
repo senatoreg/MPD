@@ -1,30 +1,16 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
-#ifndef MPD_DECODER_CLIENT_HXX
-#define MPD_DECODER_CLIENT_HXX
+#pragma once
 
 #include "Command.hxx"
 #include "Chrono.hxx"
 #include "input/Ptr.hxx"
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
+#include <string_view>
 
 struct AudioFormat;
 struct Tag;
@@ -41,7 +27,7 @@ public:
 	 * that it has read the song's meta data.
 	 *
 	 * @param audio_format the audio format which is going to be
-	 * sent to SubmitData()
+	 * sent to SubmitAudio()
 	 * @param seekable true if the song is seekable
 	 * @param duration the total duration of this song; negative if
 	 * unknown
@@ -95,7 +81,7 @@ public:
 	 *
 	 * Throws std::runtime_error on error.
 	 */
-	virtual InputStreamPtr OpenUri(const char *uri) = 0;
+	virtual InputStreamPtr OpenUri(std::string_view uri) = 0;
 
 	/**
 	 * Blocking read from the input stream.
@@ -107,7 +93,7 @@ public:
 	 * occurs: end of file; error; command (like SEEK or STOP).
 	 */
 	virtual size_t Read(InputStream &is,
-			    void *buffer, size_t length) noexcept = 0;
+			    std::span<std::byte> dest) noexcept = 0;
 
 	/**
 	 * Sets the time stamp for the next data chunk [seconds].  The MPD
@@ -128,14 +114,32 @@ public:
 	 * @return the current command, or DecoderCommand::NONE if there is no
 	 * command pending
 	 */
-	virtual DecoderCommand SubmitData(InputStream *is,
-					  const void *data, size_t length,
-					  uint16_t kbit_rate) noexcept = 0;
+	virtual DecoderCommand SubmitAudio(InputStream *is,
+					   std::span<const std::byte> audio,
+					   uint16_t kbit_rate) noexcept = 0;
 
-	DecoderCommand SubmitData(InputStream &is,
-				  const void *data, size_t length,
-				  uint16_t kbit_rate) noexcept {
-		return SubmitData(&is, data, length, kbit_rate);
+	DecoderCommand SubmitAudio(InputStream &is,
+				   std::span<const std::byte> audio,
+				   uint16_t kbit_rate) noexcept {
+		return SubmitAudio(&is, audio, kbit_rate);
+	}
+
+	template<typename T, std::size_t extent>
+	DecoderCommand SubmitAudio(InputStream *is,
+				   std::span<T, extent> audio,
+				   uint16_t kbit_rate) noexcept {
+		const std::span<const std::byte> audio_bytes =
+			std::as_bytes(audio);
+		return SubmitAudio(is, audio_bytes, kbit_rate);
+	}
+
+	template<typename T, std::size_t extent>
+	DecoderCommand SubmitAudio(InputStream &is,
+				   std::span<T, extent> audio,
+				   uint16_t kbit_rate) noexcept {
+		const std::span<const std::byte> audio_bytes =
+			std::as_bytes(audio);
+		return SubmitAudio(is, audio_bytes, kbit_rate);
 	}
 
 	/**
@@ -167,5 +171,3 @@ public:
 	 */
 	virtual void SubmitMixRamp(MixRampInfo &&mix_ramp) noexcept = 0;
 };
-
-#endif

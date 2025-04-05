@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "VorbisDecoderPlugin.h"
 #include "OggDecoder.hxx"
@@ -227,17 +211,16 @@ VorbisDecoder::SubmitSomePcm()
 	}
 #else
 	PcmInterleaveFloat(buffer,
-			   ConstBuffer<const in_sample_t *>(pcm,
-							    channels),
+			   {pcm, channels},
 			   n_frames);
 #endif
 
 	vorbis_synthesis_read(&dsp, n_frames);
 
-	const size_t nbytes = n_frames * frame_size;
-	auto cmd = client.SubmitData(input_stream,
-				     buffer, nbytes,
-				     0);
+	const std::size_t n_samples = n_frames * channels;
+	auto cmd = client.SubmitAudio(input_stream,
+				      std::span{buffer, n_samples},
+				      0);
 	if (cmd != DecoderCommand::NONE)
 		throw cmd;
 

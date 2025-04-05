@@ -7,6 +7,8 @@ song = static_library(
   'BaseSongFilter.cxx',
   'TagSongFilter.cxx',
   'ModifiedSinceSongFilter.cxx',
+  'AddedSinceSongFilter.cxx',
+  'PrioritySongFilter.cxx',
   'AudioFormatSongFilter.cxx',
   'AndSongFilter.cxx',
   'OptimizeFilter.cxx',
@@ -15,6 +17,7 @@ song = static_library(
   include_directories: inc,
   dependencies: [
     pcre_dep,
+    fmt_dep,
   ],
 )
 

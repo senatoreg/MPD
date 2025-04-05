@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
 import os, os.path
+import shutil
 import sys, subprocess
 
 if len(sys.argv) < 4:
@@ -12,7 +13,7 @@ ndk_path = sys.argv[2]
 android_abi = sys.argv[3]
 configure_args = sys.argv[4:]
 
-if not os.path.isfile(os.path.join(sdk_path, 'tools', 'android')):
+if not os.path.isfile(os.path.join(sdk_path, 'licenses', 'android-sdk-license')):
     print("SDK not found in", sdk_path, file=sys.stderr)
     sys.exit(1)
 
@@ -36,7 +37,6 @@ thirdparty_libs = [
     gme,
     ffmpeg,
     libnfs,
-    boost,
 ]
 
 # build the third-party libraries
@@ -59,8 +59,24 @@ configure_args += [
     '-Dandroid_ndk=' + ndk_path,
     '-Dandroid_abi=' + android_abi,
     '-Dandroid_strip=' + toolchain.strip,
+    '-Dopenssl:asm=disabled',
+    '-Dwrap_mode=forcefallback'
 ]
 
 from build.meson import configure as run_meson
 run_meson(toolchain, mpd_path, '.', configure_args)
-subprocess.check_call(['/usr/bin/ninja'], env=toolchain.env)
+
+ninja = shutil.which("ninja")
+subprocess.check_call([ninja], env=toolchain.env)
+
+subprocess.check_call([ninja, 'install'], env=toolchain.env)
+
+print("""
+-------------------------------------
+## To build the android app:
+# cd ../../android
+# ./gradlew assemble{}Debug
+## or, for a universal apk (includes both arm64-v8a and x86_64)
+# ./gradlew assembleUniversalDebug
+-------------------------------------
+""".format(android_abi.capitalize()))

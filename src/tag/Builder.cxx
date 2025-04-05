@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Builder.hxx"
 #include "Settings.hxx"
@@ -23,7 +7,6 @@
 #include "FixString.hxx"
 #include "Tag.hxx"
 #include "util/AllocatedArray.hxx"
-#include "util/StringView.hxx"
 
 #include <algorithm>
 #include <array>
@@ -34,11 +17,10 @@
 TagBuilder::TagBuilder(const Tag &other) noexcept
 	:duration(other.duration), has_playlist(other.has_playlist)
 {
-	items.reserve(other.num_items);
-
 	const std::size_t n = other.num_items;
 	if (n > 0) {
-		const std::scoped_lock<Mutex> protect(tag_pool_lock);
+		items.reserve(other.num_items);
+		const std::scoped_lock protect{tag_pool_lock};
 		for (std::size_t i = 0; i != n; ++i)
 			items.push_back(tag_pool_dup_item(other.items[i]));
 	}
@@ -72,7 +54,7 @@ TagBuilder::operator=(const TagBuilder &other) noexcept
 		items = other.items;
 
 		/* increment the tag pool refcounters */
-		const std::scoped_lock<Mutex> protect(tag_pool_lock);
+		const std::scoped_lock protect{tag_pool_lock};
 		for (auto &i : items)
 			i = tag_pool_dup_item(i);
 	}
@@ -177,18 +159,18 @@ TagBuilder::Complement(const Tag &other) noexcept
 
 	has_playlist |= other.has_playlist;
 
-	/* build a table of tag types that were already present in
-	   this object, which will not be copied from #other */
-	std::array<bool, TAG_NUM_OF_ITEM_TYPES> present;
-	present.fill(false);
-	for (const TagItem *i : items)
-		present[i->type] = true;
-
-	items.reserve(items.size() + other.num_items);
-
 	const std::size_t n = other.num_items;
 	if (n > 0) {
-		const std::scoped_lock<Mutex> protect(tag_pool_lock);
+		/* build a table of tag types that were already present in
+		   this object, which will not be copied from #other */
+		std::array<bool, TAG_NUM_OF_ITEM_TYPES> present;
+		present.fill(false);
+		for (const TagItem *i : items)
+			present[i->type] = true;
+
+		items.reserve(items.size() + n);
+
+		const std::scoped_lock protect{tag_pool_lock};
 		for (std::size_t i = 0; i != n; ++i) {
 			TagItem *item = other.items[i];
 			if (!present[item->type])
@@ -198,12 +180,12 @@ TagBuilder::Complement(const Tag &other) noexcept
 }
 
 void
-TagBuilder::AddItemUnchecked(TagType type, StringView value) noexcept
+TagBuilder::AddItemUnchecked(TagType type, std::string_view value) noexcept
 {
 	TagItem *i;
 
 	{
-		const std::scoped_lock<Mutex> protect(tag_pool_lock);
+		const std::scoped_lock protect{tag_pool_lock};
 		i = tag_pool_get_item(type, value);
 	}
 
@@ -211,30 +193,24 @@ TagBuilder::AddItemUnchecked(TagType type, StringView value) noexcept
 }
 
 inline void
-TagBuilder::AddItemInternal(TagType type, StringView value) noexcept
+TagBuilder::AddItemInternal(TagType type, std::string_view value) noexcept
 {
 	assert(!value.empty());
 
 	auto f = FixTagString(value);
-	if (!f.IsNull())
+	if (f != nullptr)
 		value = { f.data(), f.size() };
 
 	AddItemUnchecked(type, value);
 }
 
 void
-TagBuilder::AddItem(TagType type, StringView value) noexcept
+TagBuilder::AddItem(TagType type, std::string_view value) noexcept
 {
 	if (value.empty() || !IsTagEnabled(type))
 		return;
 
 	AddItemInternal(type, value);
-}
-
-void
-TagBuilder::AddItem(TagType type, const char *value) noexcept
-{
-	AddItem(type, StringView(value));
 }
 
 void
@@ -252,7 +228,7 @@ TagBuilder::RemoveAll() noexcept
 		return;
 
 	{
-		const std::scoped_lock<Mutex> protect(tag_pool_lock);
+		const std::scoped_lock protect{tag_pool_lock};
 		for (auto i : items)
 			tag_pool_put_item(i);
 	}
@@ -270,7 +246,7 @@ TagBuilder::RemoveType(TagType type) noexcept
 
 	const auto begin = items.begin(), end = items.end();
 
-	const std::scoped_lock<Mutex> protect(tag_pool_lock);
+	const std::scoped_lock protect{tag_pool_lock};
 	items.erase(std::remove_if(begin, end,
 				   [type](TagItem *item) {
 					   if (item->type != type)

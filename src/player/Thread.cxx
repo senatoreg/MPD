@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 /* \file
  *
@@ -44,9 +28,8 @@
 #include "MusicChunk.hxx"
 #include "song/DetachedSong.hxx"
 #include "CrossFade.hxx"
+#include "pcm/MixRampGlue.hxx"
 #include "tag/Tag.hxx"
-#include "Idle.hxx"
-#include "util/Compiler.h"
 #include "util/Domain.hxx"
 #include "thread/Name.hxx"
 #include "Log.hxx"
@@ -253,7 +236,7 @@ private:
 	 * Note: this function does not check if the decoder is already
 	 * finished.
 	 */
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	bool IsDecoderAtCurrentSong() const noexcept {
 		assert(pipe != nullptr);
 
@@ -265,7 +248,7 @@ private:
 	 * decoding it, or has finished doing it), and the player hasn't
 	 * switched to that song yet.
 	 */
-	[[nodiscard]] gcc_pure
+	[[nodiscard]] [[gnu::pure]]
 	bool IsDecoderAtNextSong() const noexcept {
 		return dc.pipe != nullptr && !IsDecoderAtCurrentSong();
 	}
@@ -328,6 +311,19 @@ private:
 	 */
 	bool OpenOutput() noexcept;
 
+	std::string UnlockAnalyzeMixRamp(const MusicPipe &pipe,
+					 const AudioFormat &audio_format,
+					 MixRampDirection direction) noexcept;
+
+	/**
+	 * @return false if more chunks of the next song are needed to
+	 * scan for MixRamp data
+	 */
+	[[nodiscard]]
+	bool MixRampScannerReady() noexcept;
+
+	void CheckCrossFade() noexcept;
+
 	/**
 	 * Obtains the next chunk from the music pipe, optionally applies
 	 * cross-fading, and sends it to all audio outputs.
@@ -371,6 +367,7 @@ Player::StartDecoder(std::unique_lock<Mutex> &lock,
 		     std::shared_ptr<MusicPipe> _pipe,
 		     bool initial_seek_essential) noexcept
 {
+	assert(!decoder_starting);
 	assert(queued || pc.command == PlayerCommand::SEEK);
 	assert(pc.next_song != nullptr);
 
@@ -403,6 +400,8 @@ Player::StopDecoder(std::unique_lock<Mutex> &lock) noexcept
 		   pipe */
 		ResetCrossFade();
 	}
+
+	decoder_starting = false;
 }
 
 bool
@@ -471,6 +470,75 @@ real_song_duration(const DetachedSong &song,
 	return {SongTime(decoder_duration) - start_time};
 }
 
+std::string
+Player::UnlockAnalyzeMixRamp(const MusicPipe &_pipe,
+			    const AudioFormat &audio_format,
+			    MixRampDirection direction) noexcept
+{
+	const ScopeUnlock unlock(pc.mutex);
+	return AnalyzeMixRamp(_pipe, audio_format, direction);
+}
+
+inline bool
+Player::MixRampScannerReady() noexcept
+{
+	assert(pipe);
+	assert(dc.pipe);
+
+	if (!pc.cross_fade.IsMixRampEnabled())
+		return true;
+
+	if (!pc.config.mixramp_analyzer)
+		/* always ready if the scanner is disabled */
+		return true;
+
+	if (dc.GetMixRampPreviousEnd() == nullptr) {
+		// TODO: scan incrementally backwards until mixrampdb is reached
+		auto s = UnlockAnalyzeMixRamp(*pipe, play_audio_format,
+					      MixRampDirection::END);
+		if (!s.empty()) {
+			FmtDebug(player_domain, "Analyzed MixRamp end: {}", s);
+			dc.SetMixRampPreviousEnd(std::move(s));
+		}
+
+		if (dc.GetMixRampStart() == nullptr)
+			/* scan the next song in the next call; first,
+			   let the main loop submit a few more chunks
+			   to the outputs for playback to avoid
+			   xrun */
+			return false;
+	}
+
+	if (dc.GetMixRampStart() == nullptr) {
+		const std::size_t want_pipe_bytes =
+			dc.out_audio_format.TimeToSize(std::chrono::seconds{20});
+		const std::size_t want_pipe_chunks =
+			std::min((want_pipe_bytes + sizeof(MusicChunk::data) - 1)
+				 / sizeof(MusicChunk::data),
+				 buffer.GetSize() / std::size_t{3});
+
+		if (dc.pipe->GetSize() < want_pipe_chunks) {
+			/* need more data */
+			if (!buffer.IsFull()) {
+				decoder_woken = true;
+				dc.Signal();
+			}
+
+			return false;
+		}
+
+		// TODO: scan incrementally until mixrampdb is reached
+		auto s = UnlockAnalyzeMixRamp(*dc.pipe, dc.out_audio_format,
+					      MixRampDirection::START);
+		if (!s.empty()) {
+			FmtDebug(player_domain, "Analyzed MixRamp start: {}", s);
+			dc.SetMixRampStart(std::move(s));
+		}
+	}
+
+	return true;
+}
+
 bool
 Player::OpenOutput() noexcept
 {
@@ -492,8 +560,6 @@ Player::OpenOutput() noexcept
 
 		pc.SetOutputError(std::current_exception());
 
-		idle_add(IDLE_PLAYER);
-
 		return false;
 	}
 
@@ -501,8 +567,7 @@ Player::OpenOutput() noexcept
 	paused = false;
 
 	pc.state = PlayerState::PLAY;
-
-	idle_add(IDLE_PLAYER);
+	pc.listener.OnPlayerStateChanged();
 
 	return true;
 }
@@ -536,7 +601,7 @@ Player::CheckDecoderStartup(std::unique_lock<Mutex> &lock) noexcept
 			(buffer_before_play_size + sizeof(MusicChunk::data) - 1)
 			/ sizeof(MusicChunk::data);
 
-		idle_add(IDLE_PLAYER);
+		pc.listener.OnPlayerStateChanged();
 
 		if (pending_seek > SongTime::zero()) {
 			assert(pc.seeking);
@@ -560,7 +625,7 @@ Player::CheckDecoderStartup(std::unique_lock<Mutex> &lock) noexcept
 		if (!paused && !OpenOutput()) {
 			FmtError(player_domain,
 				 "problems opening audio device "
-				 "while playing \"{}\"",
+				 "while playing {:?}",
 				 dc.song->GetURI());
 			return true;
 		}
@@ -626,7 +691,7 @@ Player::SeekDecoder(std::unique_lock<Mutex> &lock) noexcept
 		pc.outputs.Cancel();
 	}
 
-	idle_add(IDLE_PLAYER);
+	pc.listener.OnPlayerStateChanged();
 
 	if (!dc.IsSeekableCurrentSong(*pc.next_song)) {
 		/* the decoder is already decoding the "next" song -
@@ -722,7 +787,7 @@ Player::ProcessCommand(std::unique_lock<Mutex> &lock) noexcept
 		queued = true;
 		pc.CommandFinished();
 
-		if (dc.IsIdle())
+		if (!decoder_starting && dc.IsIdle())
 			StartDecoder(lock, std::make_shared<MusicPipe>(),
 				     false);
 
@@ -784,6 +849,58 @@ Player::ProcessCommand(std::unique_lock<Mutex> &lock) noexcept
 }
 
 inline void
+Player::CheckCrossFade() noexcept
+{
+	if (xfade_state != CrossFadeState::UNKNOWN)
+		/* already decided */
+		return;
+
+	if (pc.border_pause) {
+		/* no cross-fading if MPD is going to pause at the end
+		   of the current song */
+		xfade_state = CrossFadeState::UNKNOWN;
+		return;
+	}
+
+	if (!IsDecoderAtNextSong() || dc.IsStarting() || dc.pipe->IsEmpty())
+		/* we need information about the next song before we
+		   can decide */
+		/* the "pipe.empty" check is here so we wait for all
+                   (ReplayGain/MixRamp) metadata to appear, which some
+                   decoders parse only after reporting readiness */
+		return;
+
+	if (!pc.cross_fade.CanCrossFade(pc.total_time, dc.total_time,
+					dc.out_audio_format,
+					play_audio_format)) {
+		/* cross fading is disabled or the next song is too
+		   short */
+		xfade_state = CrossFadeState::DISABLED;
+		return;
+	}
+
+	if (!MixRampScannerReady())
+		/* need more chunks for the MixRamp scanner */
+		return;
+
+	/* enable cross fading in this song?  if yes, calculate how
+	   many chunks will be required for it */
+	cross_fade_chunks =
+		pc.cross_fade.Calculate(dc.replay_gain_db,
+					dc.replay_gain_prev_db,
+					dc.GetMixRampStart(),
+					dc.GetMixRampPreviousEnd(),
+					play_audio_format,
+					buffer.GetSize() -
+					buffer_before_play);
+	if (cross_fade_chunks > 0)
+		xfade_state = CrossFadeState::ENABLED;
+	else
+		// TODO: eliminate this "else" branch
+		xfade_state = CrossFadeState::DISABLED;
+}
+
+inline void
 PlayerControl::LockUpdateSongTag(DetachedSong &song,
 				 const Tag &new_tag) noexcept
 {
@@ -792,17 +909,15 @@ PlayerControl::LockUpdateSongTag(DetachedSong &song,
 		   streams may change tags dynamically */
 		return;
 
-	song.SetTag(new_tag);
+	if (new_tag != song.GetTag()) {
+		song.SetTag(new_tag);
 
-	LockSetTaggedSong(song);
+		LockSetTaggedSong(song);
 
-	/* the main thread will update the playlist version when he
-	   receives this event */
-	listener.OnPlayerTagModified();
-
-	/* notify all clients that the tag of the current song has
-	   changed */
-	idle_add(IDLE_PLAYER);
+		/* the main thread will update the playlist version when he
+		   receives this event */
+		listener.OnPlayerTagModified();
+	}
 }
 
 inline void
@@ -818,7 +933,7 @@ PlayerControl::PlayChunk(DetachedSong &song, MusicChunkPtr chunk,
 		return;
 
 	{
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		bit_rate = chunk->bit_rate;
 	}
 
@@ -892,7 +1007,7 @@ Player::PlayNextChunk() noexcept
 		} else {
 			/* there are not enough decoded chunks yet */
 
-			std::unique_lock<Mutex> lock(pc.mutex);
+			std::unique_lock lock{pc.mutex};
 
 			if (dc.IsIdle()) {
 				/* the decoder isn't running, abort
@@ -937,12 +1052,10 @@ Player::PlayNextChunk() noexcept
 
 		pc.LockSetOutputError(std::current_exception());
 
-		idle_add(IDLE_PLAYER);
-
 		return false;
 	}
 
-	const std::scoped_lock<Mutex> lock(pc.mutex);
+	const std::scoped_lock lock{pc.mutex};
 
 	/* this formula should prevent that the decoder gets woken up
 	   with each chunk; it is more efficient to make it decode a
@@ -964,7 +1077,7 @@ Player::SongBorder() noexcept
 	{
 		const ScopeUnlock unlock(pc.mutex);
 
-		FmtNotice(player_domain, "played \"{}\"", song->GetURI());
+		FmtNotice(player_domain, "played {:?}", song->GetURI());
 
 		ReplacePipe(dc.pipe);
 
@@ -975,7 +1088,10 @@ Player::SongBorder() noexcept
 
 	const bool border_pause = pc.ApplyBorderPause();
 	if (border_pause) {
+		const ScopeUnlock unlock(pc.mutex);
+
 		paused = true;
+
 		pc.listener.OnBorderPause();
 
 		/* drain all outputs to guarantee the current song is
@@ -984,7 +1100,7 @@ Player::SongBorder() noexcept
 		pc.outputs.Drain();
 
 		pc.outputs.Pause();
-		idle_add(IDLE_PLAYER);
+		pc.listener.OnPlayerStateChanged();
 	}
 }
 
@@ -993,7 +1109,7 @@ Player::Run() noexcept
 {
 	pipe = std::make_shared<MusicPipe>();
 
-	std::unique_lock<Mutex> lock(pc.mutex);
+	std::unique_lock lock{pc.mutex};
 
 	StartDecoder(lock, pipe, true);
 	ActivateDecoder();
@@ -1039,33 +1155,7 @@ Player::Run() noexcept
 				     false);
 		}
 
-		if (/* no cross-fading if MPD is going to pause at the
-		       end of the current song */
-		    !pc.border_pause &&
-		    IsDecoderAtNextSong() &&
-		    xfade_state == CrossFadeState::UNKNOWN &&
-		    !dc.IsStarting()) {
-			/* enable cross fading in this song?  if yes,
-			   calculate how many chunks will be required
-			   for it */
-			cross_fade_chunks =
-				pc.cross_fade.Calculate(pc.total_time,
-							dc.total_time,
-							dc.replay_gain_db,
-							dc.replay_gain_prev_db,
-							dc.GetMixRampStart(),
-							dc.GetMixRampPreviousEnd(),
-							dc.out_audio_format,
-							play_audio_format,
-							buffer.GetSize() -
-							buffer_before_play);
-			if (cross_fade_chunks > 0)
-				xfade_state = CrossFadeState::ENABLED;
-			else
-				/* cross fading is disabled or the
-				   next song is too short */
-				xfade_state = CrossFadeState::DISABLED;
-		}
+		CheckCrossFade();
 
 		if (paused) {
 			if (pc.command == PlayerCommand::NONE)
@@ -1136,7 +1226,7 @@ Player::Run() noexcept
 	cross_fade_tag.reset();
 
 	if (song != nullptr) {
-		FmtNotice(player_domain, "played \"{}\"", song->GetURI());
+		FmtNotice(player_domain, "played {:?}", song->GetURI());
 		song.reset();
 	}
 
@@ -1165,13 +1255,13 @@ try {
 
 	DecoderControl dc(mutex, cond,
 			  input_cache,
-			  configured_audio_format,
-			  replay_gain_config);
+			  config.audio_format,
+			  config.replay_gain);
 	dc.StartThread();
 
-	MusicBuffer buffer(buffer_chunks);
+	MusicBuffer buffer{config.buffer_chunks};
 
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 
 	while (true) {
 		switch (command) {
@@ -1199,9 +1289,7 @@ try {
 			}
 
 			/* fall through */
-#if CLANG_OR_GCC_VERSION(7,0)
 			[[fallthrough]];
-#endif
 
 		case PlayerCommand::PAUSE:
 			next_song.reset();

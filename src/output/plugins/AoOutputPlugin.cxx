@@ -1,33 +1,21 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "AoOutputPlugin.hxx"
 #include "../OutputAPI.hxx"
+#include "lib/fmt/RuntimeError.hxx"
 #include "thread/SafeSingleton.hxx"
 #include "system/Error.hxx"
 #include "util/IterableSplitString.hxx"
-#include "util/RuntimeError.hxx"
 #include "util/Domain.hxx"
 #include "util/StringAPI.hxx"
+#include "util/StringSplit.hxx"
+#include "util/StringStrip.hxx"
 #include "Log.hxx"
 
 #include <ao/ao.h>
+
+#include <cassert>
 
 /* An ao_sample_format, with all fields set to zero: */
 static ao_sample_format OUR_AO_FORMAT_INITIALIZER;
@@ -54,6 +42,8 @@ class AoOutput final : AudioOutput, SafeSingleton<AoInit> {
 
 	size_t frame_size;
 
+	std::size_t max_size;
+
 	explicit AoOutput(const ConfigBlock &block);
 	~AoOutput() override;
 
@@ -68,7 +58,7 @@ public:
 	void Open(AudioFormat &audio_format) override;
 	void Close() noexcept override;
 
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 };
 
 static constexpr Domain ao_output_domain("ao_output");
@@ -115,28 +105,26 @@ AoOutput::AoOutput(const ConfigBlock &block)
 		driver = ao_driver_id(value);
 
 	if (driver < 0)
-		throw FormatRuntimeError("\"%s\" is not a valid ao driver",
-					 value);
+		throw FmtRuntimeError("{:?} is not a valid ao driver",
+				      value);
 
 	ao_info *ai = ao_driver_info(driver);
 	if (ai == nullptr)
 		throw std::runtime_error("problems getting driver info");
 
-	FmtDebug(ao_output_domain, "using ao driver \"{}\" for \"{}\"\n",
+	FmtDebug(ao_output_domain, "using ao driver {:?} for {:?}\n",
 		 ai->short_name, block.GetBlockValue("name", nullptr));
 
 	value = block.GetBlockValue("options", nullptr);
 	if (value != nullptr) {
-		for (StringView i : IterableSplitString(value, ';')) {
-			i.Strip();
+		for (const std::string_view i : IterableSplitString(value, ';')) {
+			const auto [n, v] = Split(Strip(i), '=');
+			if (n.empty() || v.data() == nullptr)
+				throw FmtRuntimeError("problems parsing option {:?}",
+						      i);
 
-			auto s = i.Split('=');
-			if (s.first.empty() || s.second.IsNull())
-				throw FormatRuntimeError("problems parsing option \"%.*s\"",
-							 int(i.size), i.data);
-
-			const std::string n(s.first), v(s.second);
-			ao_append_option(&options, n.c_str(), v.c_str());
+			ao_append_option(&options, std::string{n}.c_str(),
+					 std::string{v}.c_str());
 		}
 	}
 }
@@ -171,6 +159,11 @@ AoOutput::Open(AudioFormat &audio_format)
 
 	frame_size = audio_format.GetFrameSize();
 
+	/* round down to a multiple of the frame size */
+	/* no matter how small "write_size" was configured, we must
+	   pass at least one frame to libao */
+	max_size = std::max(write_size / frame_size, std::size_t{1}) * frame_size;
+
 	format.rate = audio_format.sample_rate;
 	format.byte_format = AO_FMT_NATIVE;
 	format.channels = audio_format.channels;
@@ -186,31 +179,24 @@ AoOutput::Close() noexcept
 	ao_close(device);
 }
 
-size_t
-AoOutput::Play(const void *chunk, size_t size)
+std::size_t
+AoOutput::Play(std::span<const std::byte> src)
 {
-	assert(size % frame_size == 0);
+	assert(src.size() % frame_size == 0);
 
-	if (size > write_size) {
+	if (src.size() > max_size)
 		/* round down to a multiple of the frame size */
-		size = (write_size / frame_size) * frame_size;
-
-		if (size < frame_size)
-			/* no matter how small "write_size" was
-			   configured, we must pass at least one frame
-			   to libao */
-			size = frame_size;
-	}
+		src = src.first(max_size);
 
 	/* For whatever reason, libao wants a non-const pointer.
 	   Let's hope it does not write to the buffer, and use the
 	   union deconst hack to * work around this API misdesign. */
-	char *data = const_cast<char *>((const char *)chunk);
+	char *data = const_cast<char *>((const char *)src.data());
 
-	if (ao_play(device, data, size) == 0)
+	if (ao_play(device, data, src.size()) == 0)
 		throw MakeAoError();
 
-	return size;
+	return src.size();
 }
 
 const struct AudioOutputPlugin ao_output_plugin = {

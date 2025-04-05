@@ -1,25 +1,9 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "SndioOutputPlugin.hxx"
-#include "mixer/MixerList.hxx"
 #include "mixer/Listener.hxx"
+#include "mixer/plugins/SndioMixerPlugin.hxx"
 #include "util/Domain.hxx"
 #include "Log.hxx"
 
@@ -144,11 +128,9 @@ SndioOutput::Close()  noexcept
 }
 
 size_t
-SndioOutput::Play(const void *chunk, size_t size)
+SndioOutput::Play(std::span<const std::byte> src)
 {
-	size_t n;
-
-	n = sio_write(hdl, chunk, size);
+	const std::size_t n = sio_write(hdl, src.data(), src.size());
 	if (n == 0 && sio_eof(hdl) != 0)
 		throw std::runtime_error("sndio write failed");
 	return n;
@@ -157,12 +139,12 @@ SndioOutput::Play(const void *chunk, size_t size)
 void
 SndioOutput::SetVolume(unsigned int volume)
 {
-	sio_setvol(hdl, volume * SIO_MAXVOL / 100);
+	sio_setvol(hdl, (volume * SIO_MAXVOL + 50) / 100);
 }
 
 static inline unsigned int
 RawToPercent(int raw_volume) {
-	return raw_volume < 0 ? 100 : raw_volume * 100 / SIO_MAXVOL;
+	return raw_volume < 0 ? 100 : (raw_volume * 100 + SIO_MAXVOL / 2) / SIO_MAXVOL;
 }
 
 void

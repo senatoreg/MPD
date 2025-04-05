@@ -1,14 +1,16 @@
 project(
   'mpd',
   ['c', 'cpp'],
-  version: '0.23.17',
-  meson_version: '>= 0.56.0',
+  version: '0.24.2',
+  meson_version: '>= 1.0',
   default_options: [
     'c_std=c11',
     'build.c_std=c11',
-    'cpp_std=c++17',
-    'build.cpp_std=c++17',
+    'cpp_std=c++20',
+    'build.cpp_std=c++20',
     'warning_level=3',
+
+    'fmt:cpp_std=c++20',
 
     # If we build those libraries as Meson subproject, they shall be
     # linked statically into the MPD executable.
@@ -22,6 +24,7 @@ project(
     'libmicrohttpd:default_library=static',
     'libmpdclient:default_library=static',
     'libnpupnp:default_library=static',
+    'libsndfile:default_library=static',
     'liburing:default_library=static',
     'ogg:default_library=static',
     'openssl:default_library=static',
@@ -44,9 +47,10 @@ project(
     'lame:warning_level=0',
     'libmicrohttpd:warning_level=0',
     'libnpupnp:warning_level=0',
+    'libsndfile:warning_level=0',
     'liburing:warning_level=0',
     'sqlite3:warning_level=0',
-    'oggiopus:werror=false',
+    'ogg:werror=false',
     'ogg:warning_level=0',
     'openssl:werror=false',
     'openssl:warning_level=0',
@@ -86,6 +90,10 @@ project(
     'lame:tools=disabled',
     'libmpdclient:documentation=false',
     'libmpdclient:test=false',
+    'libsndfile:external_libs=disabled',
+    'libsndfile:mpeg=disabled',
+    'libsndfile:programs=false',
+    'libsndfile:sndio=disabled',
     'openssl:build_cli=false',
     'openssl:asm=disabled',
     'opus:docs=disabled',
@@ -100,24 +108,27 @@ version_cxx = vcs_tag(input: 'src/GitVersion.cxx', output: 'GitVersion.cxx')
 compiler = meson.get_compiler('cpp')
 c_compiler = meson.get_compiler('c')
 
-if compiler.get_id() == 'gcc' and compiler.version().version_compare('<8')
-  warning('Your GCC version is too old.  You need at least version 8.')
-elif compiler.get_id() == 'clang' and compiler.version().version_compare('<7')
-  warning('Your clang version is too old.  You need at least version 7.')
+if compiler.get_id() == 'gcc' and compiler.version().version_compare('<12')
+  warning('Your GCC version is too old.  You need at least version 12.')
+elif compiler.get_id() == 'clang' and compiler.version().version_compare('<14')
+  warning('Your clang version is too old.  You need at least version 14.')
 endif
 
 version_conf = configuration_data()
 version_conf.set_quoted('PACKAGE', meson.project_name())
 version_conf.set_quoted('PACKAGE_NAME', meson.project_name())
 version_conf.set_quoted('VERSION', meson.project_version())
-version_conf.set_quoted('PROTOCOL_VERSION', '0.23.5')
+version_conf.set_quoted('PROTOCOL_VERSION', '0.24.0')
 configure_file(output: 'Version.h', configuration: version_conf)
 
 conf = configuration_data()
 conf.set_quoted('SYSTEM_CONFIG_FILE_LOCATION', join_paths(get_option('prefix'), get_option('sysconfdir'), 'mpd.conf'))
 
-common_cppflags = [
+common_global_cppflags = [
   '-D_GNU_SOURCE',
+]
+
+common_cppflags = [
 ]
 
 test_global_common_flags = [
@@ -162,8 +173,11 @@ test_cxxflags = test_common_flags + [
   '-Wmismatched-tags',
   '-Woverloaded-virtual',
   '-Wsign-promo',
+  '-Wsuggest-override',
   '-Wvolatile',
   '-Wvirtual-inheritance',
+
+  '-Wno-missing-field-initializers',
 
   # a vtable without a dtor is just fine
   '-Wno-non-virtual-dtor',
@@ -173,12 +187,6 @@ test_cxxflags = test_common_flags + [
   '-Wheader-hygiene',
   '-Winconsistent-missing-destructor-override',
 ]
-
-if compiler.get_id() != 'gcc' or compiler.version().version_compare('>=9')
-  # The GCC 8 implementation of this flag is buggy: it complains even
-  # if "final" is present, which implies "override".
-  test_cxxflags += '-Wsuggest-override'
-endif
 
 test_cflags = test_common_flags + [
   '-Wmissing-prototypes',
@@ -208,7 +216,10 @@ if get_option('buildtype') != 'debug'
 endif
 
 if get_option('fuzzer')
-  fuzzer_flags = ['-fsanitize=fuzzer']
+  fuzzer_flags = []
+  if get_option('libfuzzer')
+    fuzzer_flags += ['-fsanitize=fuzzer']
+  endif
   if get_option('b_sanitize') == 'none'
     fuzzer_flags += ['-fsanitize=address,undefined']
   endif
@@ -227,7 +238,6 @@ is_linux = host_machine.system() == 'linux'
 is_android = get_option('android_ndk') != ''
 is_darwin = host_machine.system() == 'darwin'
 is_windows = host_machine.system() == 'windows'
-is_haiku = host_machine.system() == 'haiku'
 
 if is_android
   common_cppflags += '-DANDROID'
@@ -264,11 +274,18 @@ if is_windows
 endif
 
 if is_android
+  # With ndk27 libcpp doesn't seem to have a rune table defined for the 
+  # localization module, tell it to use the one it ships with
+  common_cppflags += ['-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE']
+
   subdir('android')
 endif
 
-add_global_arguments(common_cppflags, language: 'c')
-add_global_arguments(common_cppflags, language: 'cpp')
+add_global_arguments(common_global_cppflags, language: 'c')
+add_global_arguments(common_global_cppflags, language: 'cpp')
+
+add_project_arguments(common_cppflags, language: 'c')
+add_project_arguments(common_cppflags, language: 'cpp')
 
 enable_daemon = not is_windows and not is_android and get_option('daemon')
 conf.set('ENABLE_DAEMON', enable_daemon)
@@ -310,22 +327,7 @@ inc = include_directories(
   '.',
 )
 
-boost_dep = dependency('boost', version: '>= 1.58')
-if boost_dep.version() == '1.67'
-  # https://github.com/MusicPlayerDaemon/MPD/pull/384
-  # https://github.com/boostorg/lockfree/commit/12726cda009a855073b9bedbdce57b6ce7763da2
-  warning('Your Boost version 1.67 is known to be buggy, and the MPD build will fail. Please upgrade to Boost 1.68 or later.')
-endif
-
-fmt_dep = dependency('fmt', fallback: ['fmt', 'fmt_dep'])
-
-if compiler.get_id() == 'clang' and compiler.version().version_compare('<15')
-  fmt_dep = declare_dependency(
-    dependencies: fmt_dep,
-    # suppress bogus clang 14 warning (the version in Android NDK r25b)
-    compile_args: ['-Wno-unused-local-typedef'],
-  )
-endif
+subdir('src/lib/fmt')
 
 log = static_library(
   'log',
@@ -344,6 +346,7 @@ sources = [
   version_cxx,
   'src/Main.cxx',
   'src/protocol/ArgParser.cxx',
+  'src/protocol/IdleFlags.cxx',
   'src/command/CommandError.cxx',
   'src/command/PositionArg.cxx',
   'src/command/AllCommands.cxx',
@@ -358,8 +361,10 @@ sources = [
   'src/command/PartitionCommands.cxx',
   'src/command/OtherCommands.cxx',
   'src/command/CommandListBuilder.cxx',
+  'src/config/PartitionConfig.cxx',
+  'src/config/PlayerConfig.cxx',
+  'src/config/ReplayGainConfig.cxx',
   'src/Idle.cxx',
-  'src/IdleFlags.cxx',
   'src/decoder/Thread.cxx',
   'src/decoder/Control.cxx',
   'src/decoder/Bridge.cxx',
@@ -381,6 +386,7 @@ sources = [
   'src/client/File.cxx',
   'src/client/Response.cxx',
   'src/client/ThreadBackgroundCommand.cxx',
+  'src/client/ProtocolFeature.cxx',
   'src/Listen.cxx',
   'src/LogInit.cxx',
   'src/ls.cxx',
@@ -398,6 +404,7 @@ sources = [
   'src/PlaylistError.cxx',
   'src/PlaylistPrint.cxx',
   'src/PlaylistSave.cxx',
+  'src/playlist/Length.cxx',
   'src/playlist/PlaylistStream.cxx',
   'src/playlist/PlaylistMapper.cxx',
   'src/playlist/PlaylistAny.cxx',
@@ -406,14 +413,14 @@ sources = [
   'src/playlist/Print.cxx',
   'src/db/PlaylistVector.cxx',
   'src/queue/Queue.cxx',
-  'src/queue/QueuePrint.cxx',
-  'src/queue/QueueSave.cxx',
+  'src/queue/Print.cxx',
+  'src/queue/Save.cxx',
+  'src/queue/Selection.cxx',
   'src/queue/Playlist.cxx',
   'src/queue/PlaylistControl.cxx',
   'src/queue/PlaylistEdit.cxx',
   'src/queue/PlaylistTag.cxx',
   'src/queue/PlaylistState.cxx',
-  'src/ReplayGainGlobal.cxx',
   'src/LocateUri.cxx',
   'src/SongUpdate.cxx',
   'src/SongLoader.cxx',
@@ -466,10 +473,14 @@ if enable_database
 endif
 
 subdir('src/util')
+subdir('src/cmdline')
 subdir('src/time')
+subdir('src/lib/icu')
+subdir('src/fs')
 subdir('src/io')
 subdir('src/io/uring')
 subdir('src/system')
+subdir('src/system/linux')
 subdir('src/thread')
 subdir('src/net')
 subdir('src/event')
@@ -477,8 +488,12 @@ subdir('src/win32')
 
 subdir('src/apple')
 
+subdir('src/fs/glue')
+
+subdir('src/config')
+subdir('src/pcm')
+
 subdir('src/lib/dbus')
-subdir('src/lib/icu')
 subdir('src/lib/smbclient')
 subdir('src/lib/zlib')
 
@@ -503,10 +518,7 @@ subdir('src/lib/crypto')
 
 subdir('src/zeroconf')
 
-subdir('src/fs')
-subdir('src/config')
 subdir('src/tag')
-subdir('src/pcm')
 subdir('src/neighbor')
 subdir('src/input')
 subdir('src/archive')
@@ -529,6 +541,9 @@ if sqlite_dep.found()
     'src/sticker/Database.cxx',
     'src/sticker/Print.cxx',
     'src/sticker/SongSticker.cxx',
+    'src/sticker/TagSticker.cxx',
+    'src/sticker/AllowedTags.cxx',
+    'src/sticker/CleanupService.cxx',
   ]
 endif
 
@@ -541,9 +556,9 @@ endif
 
 basic = static_library(
   'basic',
-  'src/ReplayGainInfo.cxx',
   'src/ReplayGainMode.cxx',
   'src/SingleMode.cxx',
+  'src/ConsumeMode.cxx',
   include_directories: inc,
 )
 
@@ -588,19 +603,16 @@ if is_android
     '-lz',
   ]
   more_deps += [
-    declare_dependency(sources: [classes_jar]),
+    declare_dependency(sources: [bridge_header]),
     java_dep,
   ]
-elif is_haiku
-  target_type = 'executable'
-  target_name = 'mpd.nores'
-  link_args += [
-    '-lnetwork',
-    '-lbe',
-  ]
+
+  android_abi = get_option('android_abi')
+  install_dir = meson.current_source_dir() / 'android/app/src/main/jniLibs' / android_abi
 else
   target_type = 'executable'
   target_name = 'mpd'
+  install_dir = get_option('bindir')
 endif
 
 mpd = build_target(
@@ -609,6 +621,7 @@ mpd = build_target(
   target_type: target_type,
   include_directories: inc,
   dependencies: [
+    cmdline_dep,
     basic_dep,
     config_dep,
     dbus_dep,
@@ -637,24 +650,9 @@ mpd = build_target(
   ],
   link_args: link_args,
   build_by_default: not get_option('fuzzer'),
-  install: not is_android and not is_haiku,
+  install : true,
+  install_dir: install_dir
 )
-
-if is_android
-  subdir('android/apk')
-endif
-
-if is_haiku
-  subdir('src/haiku')
-  custom_target(
-    'mpd',
-    output: 'mpd',
-    input: [mpd, rsrc],
-    command: [addres, '@OUTPUT@', '@INPUT0@', '@INPUT1@'],
-    install: true,
-    install_dir: get_option('bindir'),
-  )
-endif
 
 configure_file(output: 'config.h', configuration: conf)
 
@@ -662,15 +660,17 @@ if systemd_dep.found()
   subdir('systemd')
 endif
 
-install_data(
-  'mpd.svg',
-  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps'),
-)
+if not is_android
+  install_data(
+    'mpd.svg',
+    install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor', 'scalable', 'apps'),
+  )
 
-install_data(
-  'AUTHORS', 'COPYING', 'NEWS', 'README.md',
-  install_dir: join_paths(get_option('datadir'), 'doc', meson.project_name()),
-)
+  install_data(
+    'AUTHORS', 'COPYING', 'NEWS', 'README.md',
+    install_dir: join_paths(get_option('datadir'), 'doc', meson.project_name()),
+  )
+endif
 
 subdir('doc')
 

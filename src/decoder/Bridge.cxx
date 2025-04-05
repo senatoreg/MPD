@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "Bridge.hxx"
 #include "DecoderAPI.hxx"
@@ -34,7 +18,6 @@
 #include "input/cache/Manager.hxx"
 #include "input/cache/Stream.hxx"
 #include "fs/Path.hxx"
-#include "util/ConstBuffer.hxx"
 #include "util/StringBuffer.hxx"
 
 #include <cassert>
@@ -112,7 +95,7 @@ NeedChunks(DecoderControl &dc, std::unique_lock<Mutex> &lock) noexcept
 static DecoderCommand
 LockNeedChunks(DecoderControl &dc) noexcept
 {
-	std::unique_lock<Mutex> lock(dc.mutex);
+	std::unique_lock lock{dc.mutex};
 	return NeedChunks(dc, lock);
 }
 
@@ -152,7 +135,7 @@ DecoderBridge::FlushChunk() noexcept
 	if (!chunk->IsEmpty())
 		dc.pipe->Push(std::move(chunk));
 
-	const std::scoped_lock<Mutex> protect(dc.mutex);
+	const std::scoped_lock protect{dc.mutex};
 	dc.client_cond.notify_one();
 }
 
@@ -214,7 +197,7 @@ DecoderBridge::GetVirtualCommand() noexcept
 DecoderCommand
 DecoderBridge::LockGetVirtualCommand() noexcept
 {
-	const std::scoped_lock<Mutex> protect(dc.mutex);
+	const std::scoped_lock protect{dc.mutex};
 	return GetVirtualCommand();
 }
 
@@ -256,6 +239,10 @@ DecoderBridge::UpdateStreamTag(InputStream *is) noexcept
 		/* discard the song tag; we don't need it */
 		song_tag.reset();
 
+	if (stream_tag && tag && *stream_tag == *tag)
+		/* not changed */
+		return false;
+
 	stream_tag = std::move(tag);
 	return true;
 }
@@ -274,7 +261,7 @@ DecoderBridge::Ready(const AudioFormat audio_format,
 		 seekable);
 
 	{
-		const std::scoped_lock<Mutex> protect(dc.mutex);
+		const std::scoped_lock protect{dc.mutex};
 		dc.SetReady(audio_format, seekable, duration);
 	}
 
@@ -300,7 +287,7 @@ DecoderBridge::GetCommand() noexcept
 void
 DecoderBridge::CommandFinished() noexcept
 {
-	const std::scoped_lock<Mutex> protect(dc.mutex);
+	const std::scoped_lock protect{dc.mutex};
 
 	assert(dc.command != DecoderCommand::NONE || initial_seek_running);
 	assert(dc.command != DecoderCommand::SEEK ||
@@ -385,7 +372,7 @@ DecoderBridge::SeekError() noexcept
 }
 
 InputStreamPtr
-DecoderBridge::OpenUri(const char *uri)
+DecoderBridge::OpenUri(std::string_view uri)
 {
 	assert(dc.state == DecoderState::START ||
 	       dc.state == DecoderState::DECODE);
@@ -396,7 +383,7 @@ DecoderBridge::OpenUri(const char *uri)
 	auto is = InputStream::Open(uri, mutex);
 	is->SetHandler(&dc);
 
-	std::unique_lock<Mutex> lock(mutex);
+	std::unique_lock lock{mutex};
 	while (true) {
 		if (dc.command == DecoderCommand::STOP)
 			throw StopDecoder();
@@ -412,16 +399,15 @@ DecoderBridge::OpenUri(const char *uri)
 }
 
 size_t
-DecoderBridge::Read(InputStream &is, void *buffer, size_t length) noexcept
+DecoderBridge::Read(InputStream &is, std::span<std::byte> dest) noexcept
 try {
-	assert(buffer != nullptr);
 	assert(dc.state == DecoderState::START ||
 	       dc.state == DecoderState::DECODE);
 
-	if (length == 0)
+	if (dest.empty())
 		return 0;
 
-	std::unique_lock<Mutex> lock(is.mutex);
+	std::unique_lock lock{is.mutex};
 
 	while (true) {
 		if (CheckCancelRead())
@@ -433,7 +419,7 @@ try {
 		dc.cond.wait(lock);
 	}
 
-	size_t nbytes = is.Read(lock, buffer, length);
+	size_t nbytes = is.Read(lock, dest);
 	assert(nbytes > 0 || is.IsEOF());
 
 	return nbytes;
@@ -452,18 +438,18 @@ DecoderBridge::SubmitTimestamp(FloatDuration t) noexcept
 }
 
 DecoderCommand
-DecoderBridge::SubmitData(InputStream *is,
-			  const void *data, size_t length,
-			  uint16_t kbit_rate) noexcept
+DecoderBridge::SubmitAudio(InputStream *is,
+			   std::span<const std::byte> audio,
+			   uint16_t kbit_rate) noexcept
 {
 	assert(dc.state == DecoderState::DECODE);
 	assert(dc.pipe != nullptr);
-	assert(length % dc.in_audio_format.GetFrameSize() == 0);
+	assert(audio.size() % dc.in_audio_format.GetFrameSize() == 0);
 
 	DecoderCommand cmd = LockGetVirtualCommand();
 
 	if (cmd == DecoderCommand::STOP || cmd == DecoderCommand::SEEK ||
-	    length == 0)
+	    audio.empty())
 		return cmd;
 
 	assert(!initial_seek_pending);
@@ -487,7 +473,7 @@ DecoderBridge::SubmitData(InputStream *is,
 	cmd = DecoderCommand::NONE;
 
 	const size_t frame_size = dc.in_audio_format.GetFrameSize();
-	size_t data_frames = length / frame_size;
+	size_t data_frames = audio.size() / frame_size;
 
 	if (dc.end_time.IsPositive()) {
 		/* enforce the given end time */
@@ -502,7 +488,7 @@ DecoderBridge::SubmitData(InputStream *is,
 			/* past the end of the range: truncate this
 			   data submission and stop the decoder */
 			data_frames = remaining_frames;
-			length = data_frames * frame_size;
+			audio = audio.first(data_frames * frame_size);
 			cmd = DecoderCommand::STOP;
 		}
 	}
@@ -511,9 +497,7 @@ DecoderBridge::SubmitData(InputStream *is,
 		assert(dc.in_audio_format != dc.out_audio_format);
 
 		try {
-			auto result = convert->Convert({data, length});
-			data = result.data;
-			length = result.size;
+			audio = convert->Convert(audio);
 		} catch (...) {
 			/* the PCM conversion has failed - stop
 			   playback, since we have no better way to
@@ -525,7 +509,7 @@ DecoderBridge::SubmitData(InputStream *is,
 		assert(dc.in_audio_format == dc.out_audio_format);
 	}
 
-	while (length > 0) {
+	while (!audio.empty()) {
 		bool full;
 
 		auto *chunk = GetChunk();
@@ -545,11 +529,11 @@ DecoderBridge::SubmitData(InputStream *is,
 			continue;
 		}
 
-		const size_t nbytes = std::min(dest.size, length);
+		const size_t nbytes = std::min(dest.size(), audio.size());
 
 		/* copy the buffer */
 
-		memcpy(dest.data, data, nbytes);
+		memcpy(dest.data(), audio.data(), nbytes);
 
 		/* expand the music pipe chunk */
 
@@ -559,8 +543,7 @@ DecoderBridge::SubmitData(InputStream *is,
 			FlushChunk();
 		}
 
-		data = (const uint8_t *)data + nbytes;
-		length -= nbytes;
+		audio = audio.subspan(nbytes);
 
 		timestamp += dc.out_audio_format.SizeToTime<FloatDuration>(nbytes);
 	}

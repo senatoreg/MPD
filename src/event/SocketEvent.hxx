@@ -1,32 +1,12 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
-#ifndef MPD_SOCKET_EVENT_HXX
-#define MPD_SOCKET_EVENT_HXX
+#pragma once
 
 #include "BackendEvents.hxx"
 #include "net/SocketDescriptor.hxx"
 #include "util/BindMethod.hxx"
 #include "util/IntrusiveList.hxx"
-
-#include <cstddef>
-#include <type_traits>
 
 class EventLoop;
 
@@ -43,10 +23,12 @@ class EventLoop;
  * thread that runs the #EventLoop, except where explicitly documented
  * as thread-safe.
  */
-class SocketEvent final : IntrusiveListHook, public EventPollBackendEvents
+class SocketEvent final
+	: IntrusiveListHook<IntrusiveHookMode::NORMAL>,
+	  public EventPollBackendEvents
 {
 	friend class EventLoop;
-	friend class IntrusiveList<SocketEvent>;
+	friend struct IntrusiveListBaseHookTraits<SocketEvent>;
 
 	EventLoop &loop;
 
@@ -74,8 +56,6 @@ public:
 	 * need to be registered with epoll_ctl().
 	 */
 	static constexpr unsigned IMPLICIT_FLAGS = ERROR|HANGUP;
-
-	using ssize_t = std::make_signed<size_t>::type;
 
 	SocketEvent(EventLoop &_loop, Callback _callback,
 		    SocketDescriptor _fd=SocketDescriptor::Undefined()) noexcept
@@ -130,6 +110,10 @@ public:
 		return scheduled_flags;
 	}
 
+	unsigned GetReadyFlags() const noexcept {
+		return ready_flags;
+	}
+
 	void SetReadyFlags(unsigned flags) noexcept {
 		ready_flags = flags;
 	}
@@ -153,11 +137,15 @@ public:
 	}
 
 	void CancelRead() noexcept {
-		Schedule(GetScheduledFlags() & ~READ);
+		/* IMPLICIT_FLAGS is erased from the flags so
+		   CancelRead() after ScheduleRead() cancels the whole
+		   event instead of leaving IMPLICIT_FLAGS
+		   scheduled */
+		Schedule(GetScheduledFlags() & ~(READ|IMPLICIT_FLAGS));
 	}
 
 	void CancelWrite() noexcept {
-		Schedule(GetScheduledFlags() & ~WRITE);
+		Schedule(GetScheduledFlags() & ~(WRITE|IMPLICIT_FLAGS));
 	}
 
 	/**
@@ -181,5 +169,3 @@ private:
 	 */
 	void Dispatch() noexcept;
 };
-
-#endif

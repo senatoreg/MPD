@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "QueueCommands.hxx"
@@ -24,21 +8,22 @@
 #include "protocol/RangeArg.hxx"
 #include "db/DatabaseQueue.hxx"
 #include "db/Selection.hxx"
+#include "tag/ParseName.hxx"
 #include "song/Filter.hxx"
 #include "SongLoader.hxx"
 #include "song/DetachedSong.hxx"
 #include "LocateUri.hxx"
 #include "queue/Playlist.hxx"
+#include "queue/Selection.hxx"
 #include "PlaylistPrint.hxx"
 #include "client/Client.hxx"
 #include "client/Response.hxx"
 #include "Partition.hxx"
 #include "Instance.hxx"
 #include "BulkEdit.hxx"
-#include "util/ConstBuffer.hxx"
 #include "util/Exception.hxx"
 #include "util/StringAPI.hxx"
-#include "util/NumberParser.hxx"
+#include "util/CNumberParser.hxx"
 
 #include <fmt/format.h>
 
@@ -80,7 +65,7 @@ handle_add(Client &client, Request args, [[maybe_unused]] Response &r)
 		uri = "";
 
 	const auto old_size = partition.playlist.GetLength();
-	const unsigned position = args.size > 1
+	const unsigned position = args.size() > 1
 		? ParseInsertPosition(args[1], partition.playlist)
 		: old_size;
 
@@ -135,7 +120,7 @@ handle_addid(Client &client, Request args, Response &r)
 
 	const auto queue_length = partition.playlist.queue.GetLength();
 
-	if (args.size > 1)
+	if (args.size() > 1)
 		to = ParseInsertPosition(args[1], partition.playlist);
 
 	const SongLoader loader(client);
@@ -285,10 +270,52 @@ handle_playlistid(Client &client, Request args, Response &r)
 	return CommandResult::OK;
 }
 
+static TagType
+ParseSortTag(const char *s)
+{
+	if (StringIsEqualIgnoreCase(s, "Last-Modified"))
+		return TagType(SORT_TAG_LAST_MODIFIED);
+
+	if (StringIsEqualIgnoreCase(s, "Added"))
+		return TagType(SORT_TAG_ADDED);
+
+	if (StringIsEqualIgnoreCase(s, "prio"))
+		return TagType(SORT_TAG_PRIO);
+
+	TagType tag = tag_name_parse_i(s);
+	if (tag == TAG_NUM_OF_ITEM_TYPES)
+		throw ProtocolError(ACK_ERROR_ARG, "Unknown sort tag");
+
+	return tag;
+}
+
 static CommandResult
 handle_playlist_match(Client &client, Request args, Response &r,
 		      bool fold_case)
 {
+	RangeArg window = RangeArg::All();
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "window")) {
+		window = args.ParseRange(args.size() - 1);
+
+		args.pop_back();
+		args.pop_back();
+	}
+
+	TagType sort = TAG_NUM_OF_ITEM_TYPES;
+	bool descending = false;
+	if (args.size() >= 2 && StringIsEqual(args[args.size() - 2], "sort")) {
+		const char *s = args.back();
+		if (*s == '-') {
+			descending = true;
+			++s;
+		}
+
+		sort = ParseSortTag(s);
+
+		args.pop_back();
+		args.pop_back();
+	}
+
 	SongFilter filter;
 	try {
 		filter.Parse(args, fold_case);
@@ -299,7 +326,13 @@ handle_playlist_match(Client &client, Request args, Response &r,
 	}
 	filter.Optimize();
 
-	playlist_print_find(r, client.GetPlaylist(), filter);
+	QueueSelection selection;
+	selection.filter = &filter;
+	selection.window = window;
+	selection.sort = sort;
+	selection.descending = descending;
+
+	playlist_print_find(r, client.GetPlaylist(), selection);
 	return CommandResult::OK;
 }
 

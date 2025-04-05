@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_PARTITION_HXX
 #define MPD_PARTITION_HXX
@@ -29,22 +13,24 @@
 #include "player/Control.hxx"
 #include "player/Listener.hxx"
 #include "protocol/RangeArg.hxx"
+#include "util/IntrusiveList.hxx"
 #include "ReplayGainMode.hxx"
 #include "SingleMode.hxx"
+#include "ConsumeMode.hxx"
 #include "Chrono.hxx"
 #include "config.h"
-
-#include <boost/intrusive/list.hpp>
 
 #include <string>
 #include <memory>
 
+struct PartitionConfig;
 struct Instance;
 struct RangeArg;
 class MultipleOutputs;
 class SongLoader;
 class ClientListener;
 class Client;
+struct ClientPerPartitionListHook;
 
 /**
  * A partition of the Music Player Daemon.  It is a separate unit with
@@ -59,12 +45,11 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 
 	const std::string name;
 
+	const PartitionConfig &config;
+
 	std::unique_ptr<ClientListener> listener;
 
-	boost::intrusive::list<Client,
-			       boost::intrusive::base_hook<boost::intrusive::list_base_hook<boost::intrusive::tag<Partition>,
-											    boost::intrusive::link_mode<boost::intrusive::normal_link>>>,
-			       boost::intrusive::constant_time_size<false>> clients;
+	IntrusiveList<Client, ClientPerPartitionListHook> clients;
 
 	/**
 	 * Monitor for idle events local to this partition.
@@ -85,10 +70,7 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 
 	Partition(Instance &_instance,
 		  const char *_name,
-		  unsigned max_length,
-		  unsigned buffer_chunks,
-		  AudioFormat configured_audio_format,
-		  const ReplayGainConfig &replay_gain_config) noexcept;
+		  const PartitionConfig &_config) noexcept;
 
 	~Partition() noexcept;
 
@@ -218,7 +200,7 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 		playlist.SetSingle(pc, new_value);
 	}
 
-	void SetConsume(bool new_value) noexcept {
+	void SetConsume(ConsumeMode new_value) noexcept {
 		playlist.SetConsume(new_value);
 	}
 
@@ -280,12 +262,16 @@ private:
 	void OnQueueSongStarted() noexcept override;
 
 	/* virtual methods from class PlayerListener */
+	void OnPlayerError() noexcept override;
+	void OnPlayerStateChanged() noexcept override;
 	void OnPlayerSync() noexcept override;
 	void OnPlayerTagModified() noexcept override;
 	void OnBorderPause() noexcept override;
+	void OnPlayerOptionsChanged() noexcept override;
 
 	/* virtual methods from class MixerListener */
 	void OnMixerVolumeChanged(Mixer &mixer, int volume) noexcept override;
+	void OnMixerChanged() noexcept override;
 
 	/* callback for #idle_monitor */
 	void OnIdleMonitor(unsigned mask) noexcept;

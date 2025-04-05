@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "OtherCommands.hxx"
@@ -36,7 +20,6 @@
 #include "time/ChronoUtil.hxx"
 #include "util/UriUtil.hxx"
 #include "util/StringAPI.hxx"
-#include "util/StringView.hxx"
 #include "fs/AllocatedPath.hxx"
 #include "Stats.hxx"
 #include "PlaylistFile.hxx"
@@ -45,8 +28,9 @@
 #include "client/Response.hxx"
 #include "Partition.hxx"
 #include "Instance.hxx"
-#include "IdleFlags.hxx"
+#include "protocol/IdleFlags.hxx"
 #include "Log.hxx"
+#include "Mapper.hxx"
 
 #ifdef ENABLE_DATABASE
 #include "DatabaseCommands.hxx"
@@ -147,7 +131,7 @@ public:
 	explicit PrintTagHandler(Response &_response) noexcept
 		:NullTagHandler(WANT_TAG), response(_response) {}
 
-	void OnTag(TagType type, StringView value) noexcept override {
+	void OnTag(TagType type, std::string_view value) noexcept override {
 		if (response.GetClient().tag_mask.Test(type))
 			tag_print(response, type, value);
 	}
@@ -169,14 +153,14 @@ static CommandResult
 handle_lsinfo_relative(Client &client, Response &r, const char *uri)
 {
 #ifdef ENABLE_DATABASE
-	CommandResult result = handle_lsinfo2(client, uri, r);
-	if (result != CommandResult::OK)
+	if (CommandResult result = handle_lsinfo2(client, uri, r);
+	    result != CommandResult::OK)
 		return result;
 #else
 	(void)client;
 #endif
 
-	if (isRootDirectory(uri)) {
+	if (!client.ProtocolFeatureEnabled(PF_HIDE_PLAYLISTS_IN_ROOT) && isRootDirectory(uri)) {
 		try {
 			print_spl_list(r, ListPlaylistFiles());
 		} catch (...) {
@@ -277,7 +261,7 @@ handle_update(Client &client, Request args, Response &r, bool discard)
 #ifdef ENABLE_DATABASE
 	const char *path = "";
 
-	assert(args.size <= 1);
+	assert(args.size() <= 1);
 	if (!args.empty()) {
 		path = args.front();
 
@@ -290,12 +274,10 @@ handle_update(Client &client, Request args, Response &r, bool discard)
 		}
 	}
 
-	UpdateService *update = client.GetInstance().update;
-	if (update != nullptr)
+	if (auto *update = client.GetInstance().update)
 		return handle_update(r, *update, path, discard);
 
-	Database *db = client.GetInstance().GetDatabase();
-	if (db != nullptr)
+	if (auto *db = client.GetInstance().GetDatabase())
 		return handle_update(r, *db, path, discard);
 #else
 	(void)client;
@@ -388,11 +370,17 @@ handle_config(Client &client, [[maybe_unused]] Request args, Response &r)
 	}
 
 #ifdef ENABLE_DATABASE
-	const Storage *storage = client.GetStorage();
-	if (storage != nullptr) {
+	if (const Storage *storage = client.GetStorage()) {
 		const auto path = storage->MapUTF8("");
 		r.Fmt("music_directory: {}\n", path);
 	}
+#endif
+
+	if (const auto spl_path = map_spl_path(); !spl_path.IsNull())
+		r.Fmt("playlist_directory: {}\n", spl_path.ToUTF8());
+
+#ifdef HAVE_PCRE
+	r.Write("pcre: 1\n");
 #endif
 
 	return CommandResult::OK;

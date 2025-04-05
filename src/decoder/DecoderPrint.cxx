@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "DecoderPrint.hxx"
 #include "DecoderList.hxx"
@@ -41,6 +25,10 @@ decoder_plugin_print(Response &r,
 		for (p = plugin.suffixes; *p != nullptr; ++p)
 			r.Fmt("suffix: {}\n", *p);
 
+	if (plugin.suffixes_function != nullptr)
+		for (const auto &i : plugin.suffixes_function())
+			r.Fmt("suffix: {}\n", i);
+
 	if (plugin.mime_types != nullptr)
 		for (p = plugin.mime_types; *p != nullptr; ++p)
 			r.Fmt("mime_type: {}\n", *p);
@@ -49,7 +37,6 @@ decoder_plugin_print(Response &r,
 void
 decoder_list_print(Response &r)
 {
-	const auto f = [&](const auto &plugin)
-		{ return decoder_plugin_print(r, plugin); };
-	decoder_plugins_for_each_enabled(f);
+	for (const auto &plugin : GetEnabledDecoderPlugins())
+		decoder_plugin_print(r, plugin);
 }

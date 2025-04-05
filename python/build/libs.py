@@ -3,12 +3,9 @@ from os.path import abspath
 
 from build.project import Project
 from build.zlib import ZlibProject
-from build.meson import MesonProject
 from build.cmake import CmakeProject
 from build.autotools import AutotoolsProject
 from build.ffmpeg import FfmpegProject
-from build.boost import BoostProject
-from build.jack import JackProject
 
 libsamplerate = CmakeProject(
     'https://github.com/libsndfile/libsamplerate/releases/download/0.2.2/libsamplerate-0.2.2.tar.xz',
@@ -39,8 +36,8 @@ libmodplug = AutotoolsProject(
 )
 
 libopenmpt = AutotoolsProject(
-    'https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-0.7.9+release.autotools.tar.gz',
-    '0386e918d75d797e79d5b14edd0847165d8b359e9811ef57652c0a356a2dfcf4',
+    'https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-0.7.13+release.autotools.tar.gz',
+    'dcd7cde4f9c498eb496c4556e1c1b81353e2a74747e8270a42565117ea42e1f1',
     'lib/libopenmpt.a',
     [
         '--disable-shared', '--enable-static',
@@ -52,7 +49,7 @@ libopenmpt = AutotoolsProject(
         '--without-portaudio', '--without-portaudiocpp', '--without-sndfile',
         '--without-flac',
     ],
-    base='libopenmpt-0.7.9+release.autotools',
+    base='libopenmpt-0.7.13+release.autotools',
 )
 
 wildmidi = CmakeProject(
@@ -79,8 +76,8 @@ gme = CmakeProject(
 )
 
 ffmpeg = FfmpegProject(
-    'http://ffmpeg.org/releases/ffmpeg-7.1.tar.xz',
-    '40973d44970dbc83ef302b0609f2e74982be2d85916dd2ee7472d30678a7abe6',
+    'http://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz',
+    '733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1',
     'lib/libavcodec.a',
     [
         '--disable-shared', '--enable-static',
@@ -526,8 +523,8 @@ ffmpeg = FfmpegProject(
 )
 
 libnfs = AutotoolsProject(
-    'https://github.com/sahlberg/libnfs/archive/libnfs-5.0.3.tar.gz',
-    'd945cb4f4c8f82ee1f3640893a168810f794a28e1010bb007ec5add345e9df3e',
+    'https://github.com/sahlberg/libnfs/archive/libnfs-6.0.2.tar.gz',
+    '4e5459cc3e0242447879004e9ad28286d4d27daa42cbdcde423248fad911e747',
     'lib/libnfs.a',
     [
         '--disable-shared', '--enable-static',
@@ -537,19 +534,8 @@ libnfs = AutotoolsProject(
         '--disable-werror',
 
         '--disable-utils', '--disable-examples',
+        '--without-libkrb5',
     ],
-    base='libnfs-libnfs-5.0.3',
+    base='libnfs-libnfs-6.0.2',
     autoreconf=True,
-)
-
-jack = JackProject(
-    'https://github.com/jackaudio/jack2/archive/v1.9.17.tar.gz',
-    '38f674bbc57852a8eb3d9faa1f96a0912d26f7d5df14c11005ad499c8ae352f2',
-    'lib/pkgconfig/jack.pc',
-)
-
-boost = BoostProject(
-    'https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.tar.bz2',
-    '71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa',
-    'include/boost/version.hpp',
 )

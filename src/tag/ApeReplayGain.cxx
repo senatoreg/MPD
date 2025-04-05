@@ -1,32 +1,18 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ApeReplayGain.hxx"
 #include "ApeLoader.hxx"
-#include "ReplayGain.hxx"
-#include "util/StringView.hxx"
+#include "ReplayGainParser.hxx"
+
+#include <algorithm>
+#include <string_view>
 
 #include <string.h>
 
 static bool
 replay_gain_ape_callback(unsigned long flags, const char *key,
-			 StringView _value,
+			 std::string_view _value,
 			 ReplayGainInfo &info)
 {
 	/* we only care about utf-8 text tags */
@@ -34,11 +20,10 @@ replay_gain_ape_callback(unsigned long flags, const char *key,
 		return false;
 
 	char value[16];
-	if (_value.size >= sizeof(value))
+	if (_value.size() >= sizeof(value))
 		return false;
 
-	memcpy(value, _value.data, _value.size);
-	value[_value.size] = 0;
+	*std::copy(_value.begin(), _value.end(), value) = 0;
 
 	return ParseReplayGainTag(info, key, value);
 }
@@ -50,7 +35,7 @@ replay_gain_ape_read(InputStream &is, ReplayGainInfo &info)
 
 	auto callback = [&info, &found]
 		(unsigned long flags, const char *key,
-		 StringView value) {
+		 std::string_view value) {
 		found |= replay_gain_ape_callback(flags, key,
 						  value,
 						  info);

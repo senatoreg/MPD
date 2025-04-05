@@ -1,28 +1,11 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "StorageCommands.hxx"
 #include "Request.hxx"
 #include "time/ChronoUtil.hxx"
 #include "util/UriUtil.hxx"
-#include "util/ConstBuffer.hxx"
 #include "fs/Traits.hxx"
 #include "client/Client.hxx"
 #include "client/Response.hxx"
@@ -33,13 +16,13 @@
 #include "db/plugins/simple/SimpleDatabasePlugin.hxx"
 #include "db/update/Service.hxx"
 #include "TimePrint.hxx"
-#include "IdleFlags.hxx"
+#include "protocol/IdleFlags.hxx"
 
 #include <fmt/format.h>
 
 #include <memory>
 
-gcc_pure
+[[gnu::pure]]
 static bool
 skip_path(const char *name_utf8) noexcept
 {
@@ -111,7 +94,7 @@ print_storage_uri(Client &client, Response &r, const Storage &storage)
 	if (uri.empty())
 		return;
 
-	if (PathTraitsUTF8::IsAbsolute(uri.c_str())) {
+	if (PathTraitsUTF8::IsAbsolute(uri)) {
 		/* storage points to local directory */
 
 		if (!client.IsLocal())
@@ -271,4 +254,16 @@ handle_unmount(Client &client, Request args, Response &r)
 	instance.EmitIdle(IDLE_MOUNT);
 
 	return CommandResult::OK;
+}
+
+bool
+mount_commands_available(Instance &instance) noexcept
+{
+#ifdef ENABLE_DATABASE
+	if (auto *db = dynamic_cast<SimpleDatabase *>(instance.GetDatabase())) {
+		return db->HasCache();
+	}
+#endif
+
+	return false;
 }

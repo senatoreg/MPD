@@ -1,26 +1,11 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "ChannelsConverter.hxx"
 #include "PcmChannels.hxx"
-#include "util/ConstBuffer.hxx"
-#include "util/RuntimeError.hxx"
+#include "lib/fmt/AudioFormatFormatter.hxx"
+#include "lib/fmt/RuntimeError.hxx"
+#include "util/SpanCast.hxx"
 
 #include <cassert>
 
@@ -38,8 +23,8 @@ PcmChannelsConverter::Open(SampleFormat _format,
 		break;
 
 	default:
-		throw FormatRuntimeError("PCM channel conversion for %s is not implemented",
-					 sample_format_to_string(_format));
+		throw FmtRuntimeError("PCM channel conversion for {} is not implemented",
+				      _format);
 	}
 
 	format = _format;
@@ -55,8 +40,8 @@ PcmChannelsConverter::Close() noexcept
 #endif
 }
 
-ConstBuffer<void>
-PcmChannelsConverter::Convert(ConstBuffer<void> src) noexcept
+std::span<const std::byte>
+PcmChannelsConverter::Convert(std::span<const std::byte> src) noexcept
 {
 	switch (format) {
 	case SampleFormat::UNDEFINED:
@@ -66,24 +51,24 @@ PcmChannelsConverter::Convert(ConstBuffer<void> src) noexcept
 		gcc_unreachable();
 
 	case SampleFormat::S16:
-		return pcm_convert_channels_16(buffer, dest_channels,
-					       src_channels,
-					       ConstBuffer<int16_t>::FromVoid(src)).ToVoid();
+		return std::as_bytes(pcm_convert_channels_16(buffer, dest_channels,
+							     src_channels,
+							     FromBytesStrict<const int16_t>(src)));
 
 	case SampleFormat::S24_P32:
-		return pcm_convert_channels_24(buffer, dest_channels,
-					       src_channels,
-					       ConstBuffer<int32_t>::FromVoid(src)).ToVoid();
+		return std::as_bytes(pcm_convert_channels_24(buffer, dest_channels,
+							     src_channels,
+							     FromBytesStrict<const int32_t>(src)));
 
 	case SampleFormat::S32:
-		return pcm_convert_channels_32(buffer, dest_channels,
-					       src_channels,
-					       ConstBuffer<int32_t>::FromVoid(src)).ToVoid();
+		return std::as_bytes(pcm_convert_channels_32(buffer, dest_channels,
+							     src_channels,
+							     FromBytesStrict<const int32_t>(src)));
 
 	case SampleFormat::FLOAT:
-		return pcm_convert_channels_float(buffer, dest_channels,
-						  src_channels,
-						  ConstBuffer<float>::FromVoid(src)).ToVoid();
+		return std::as_bytes(pcm_convert_channels_float(buffer, dest_channels,
+								src_channels,
+								FromBytesStrict<const float>(src)));
 	}
 
 	assert(false);

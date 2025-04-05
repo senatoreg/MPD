@@ -7,16 +7,16 @@ configure_file(output: 'Features.h', configuration: event_features)
 
 event_sources = []
 
-if uring_dep.found()
-  event_sources += 'UringManager.cxx'
-endif
-
 if is_windows
   event_sources += 'WinSelectBackend.cxx'
 elif is_linux and get_option('epoll')
   # epoll support is header-only
 else
   event_sources += 'PollBackend.cxx'
+endif
+
+if enable_inotify
+  event_sources += 'InotifyEvent.cxx'
 endif
 
 event = static_library(
@@ -26,7 +26,6 @@ event = static_library(
   'TimerList.cxx',
   'CoarseTimerEvent.cxx',
   'FineTimerEvent.cxx',
-  'IdleEvent.cxx',
   'InjectEvent.cxx',
   'DeferEvent.cxx',
   'MaskMonitor.cxx',
@@ -41,8 +40,8 @@ event = static_library(
   event_sources,
   include_directories: inc,
   dependencies: [
-    boost_dep,
     log_dep,
+    io_dep,
     uring_dep,
   ],
 )
@@ -53,7 +52,6 @@ event_dep = declare_dependency(
     thread_dep,
     net_dep,
     system_dep,
-    boost_dep,
     uring_dep,
   ],
 )

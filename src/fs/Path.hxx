@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #ifndef MPD_FS_PATH_HXX
 #define MPD_FS_PATH_HXX
@@ -166,9 +150,37 @@ public:
 		return Traits::IsAbsolute(c_str());
 	}
 
+	/**
+	 * Returns the filename suffix (including the dot) or nullptr
+	 * if the path does not have one.
+	 */
 	[[gnu::pure]]
 	const_pointer GetSuffix() const noexcept;
+
+	/**
+	 * Return a copy of this path but with the given suffix
+	 * (replacing the existing suffix if there is one).
+	 *
+	 * @param new_suffix the new filename suffix (must start with
+	 * a dot)
+	 */
+	[[gnu::pure]]
+	AllocatedPath WithSuffix(const_pointer new_suffix) const noexcept;
+
+	/**
+	 * Returns the filename extension (excluding the dot) or
+	 * nullptr if the path does not have one.
+	 */
+	[[gnu::pure]]
+	const_pointer GetExtension() const noexcept;
 };
+
+/**
+ * Concatenate a string to a #Path object.
+ */
+[[gnu::pure]]
+AllocatedPath
+operator+(Path path, PathTraitsFS::string_view other) noexcept;
 
 /**
  * Concatenate two path components using the directory separator.

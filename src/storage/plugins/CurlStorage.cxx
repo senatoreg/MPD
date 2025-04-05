@@ -1,28 +1,15 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "CurlStorage.hxx"
 #include "storage/StoragePlugin.hxx"
 #include "storage/StorageInterface.hxx"
 #include "storage/FileInfo.hxx"
 #include "storage/MemoryDirectoryReader.hxx"
-#include "lib/curl/Error.hxx"
+#include "input/InputStream.hxx"
+#include "input/RewindInputStream.hxx"
+#include "input/plugins/CurlInputPlugin.hxx"
+#include "lib/curl/HttpStatusError.hxx"
 #include "lib/curl/Init.hxx"
 #include "lib/curl/Global.hxx"
 #include "lib/curl/Slist.hxx"
@@ -31,20 +18,24 @@
 #include "lib/curl/Handler.hxx"
 #include "lib/curl/Escape.hxx"
 #include "lib/expat/ExpatParser.hxx"
+#include "lib/fmt/ToBuffer.hxx"
 #include "fs/Traits.hxx"
 #include "event/InjectEvent.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "util/ASCII.hxx"
-#include "util/RuntimeError.hxx"
+#include "util/NumberParser.hxx"
+#include "util/SpanCast.hxx"
 #include "util/StringCompare.hxx"
-#include "util/StringFormat.hxx"
+#include "util/StringSplit.hxx"
 #include "util/UriExtract.hxx"
 
 #include <cassert>
 #include <memory>
 #include <string>
 #include <utility>
+
+using std::string_view_literals::operator""sv;
 
 class CurlStorage final : public Storage {
 	const std::string base;
@@ -64,6 +55,8 @@ public:
 	[[nodiscard]] std::string MapUTF8(std::string_view uri_utf8) const noexcept override;
 
 	[[nodiscard]] std::string_view MapToRelativeUTF8(std::string_view uri_utf8) const noexcept override;
+
+	InputStreamPtr OpenFile(std::string_view uri_utf8, Mutex &mutex) override;
 };
 
 std::string
@@ -81,6 +74,12 @@ CurlStorage::MapToRelativeUTF8(std::string_view uri_utf8) const noexcept
 {
 	return PathTraitsUTF8::Relative(base,
 					CurlUnescape(uri_utf8));
+}
+
+InputStreamPtr
+CurlStorage::OpenFile(std::string_view uri_utf8, Mutex &mutex)
+{
+	return input_rewind_open(OpenCurlInputStream(MapUTF8(uri_utf8), {}, mutex));
 }
 
 class BlockingHttpRequest : protected CurlResponseHandler {
@@ -110,7 +109,7 @@ public:
 	}
 
 	void Wait() {
-		std::unique_lock<Mutex> lock(mutex);
+		std::unique_lock lock{mutex};
 		cond.wait(lock, [this]{ return done; });
 
 		if (postponed_error)
@@ -131,7 +130,7 @@ protected:
 	}
 
 	void LockSetDone() {
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		SetDone();
 	}
 
@@ -149,7 +148,7 @@ private:
 
 	/* virtual methods from CurlResponseHandler */
 	void OnError(std::exception_ptr e) noexcept final {
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		postponed_error = std::move(e);
 		SetDone();
 	}
@@ -173,21 +172,18 @@ struct DavResponse {
 
 [[gnu::pure]]
 static unsigned
-ParseStatus(const char *s) noexcept
+ParseStatus(std::string_view s) noexcept
 {
 	/* skip the "HTTP/1.1" prefix */
-	const char *space = std::strchr(s, ' ');
-	if (space == nullptr)
-		return 0;
+	const auto [http_1_1, rest] = Split(s, ' ');
 
-	return strtoul(space + 1, nullptr, 10);
-}
+	/* skip the string suffix */
+	const auto [status_string, _] = Split(rest, ' ');
 
-[[gnu::pure]]
-static unsigned
-ParseStatus(const char *s, size_t length) noexcept
-{
-	return ParseStatus(std::string(s, length).c_str());
+	if (const auto status = ParseInteger<unsigned>(status_string))
+		return *status;
+
+	return 0;
 }
 
 [[gnu::pure]]
@@ -199,26 +195,22 @@ ParseTimeStamp(const char *s) noexcept
 
 [[gnu::pure]]
 static std::chrono::system_clock::time_point
-ParseTimeStamp(const char *s, size_t length) noexcept
+ParseTimeStamp(std::string_view s) noexcept
 {
-	return ParseTimeStamp(std::string(s, length).c_str());
+	return ParseTimeStamp(std::string{s}.c_str());
 }
 
 [[gnu::pure]]
 static uint64_t
-ParseU64(const char *s) noexcept
+ParseU64(std::string_view s) noexcept
 {
-	return strtoull(s, nullptr, 10);
+	if (const auto i = ParseInteger<uint_least64_t>(s))
+		return *i;
+
+	return 0;
 }
 
 [[gnu::pure]]
-static uint64_t
-ParseU64(const char *s, size_t length) noexcept
-{
-	return ParseU64(std::string(s, length).c_str());
-}
-
-gcc_pure
 static bool
 IsXmlContentType(const char *content_type) noexcept
 {
@@ -226,7 +218,7 @@ IsXmlContentType(const char *content_type) noexcept
 		StringStartsWith(content_type, "application/xml");
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
 IsXmlContentType(const Curl::Headers &headers) noexcept
 {
@@ -259,29 +251,30 @@ public:
 		:BlockingHttpRequest(_curl, _uri),
 		 CommonExpatParser(ExpatNamespaceSeparator{'|'})
 	{
-		request.SetOption(CURLOPT_CUSTOMREQUEST, "PROPFIND");
-		request.SetOption(CURLOPT_FOLLOWLOCATION, 1L);
-		request.SetOption(CURLOPT_MAXREDIRS, 1L);
+		auto &easy = request.GetEasy();
+
+		easy.SetOption(CURLOPT_CUSTOMREQUEST, "PROPFIND");
+		easy.SetOption(CURLOPT_FOLLOWLOCATION, 1L);
+		easy.SetOption(CURLOPT_MAXREDIRS, 1L);
 
 		/* this option eliminates the probe request when
 		   username/password are specified */
-		request.SetOption(CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+		easy.SetOption(CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
 
-		request_headers.Append(StringFormat<40>("depth: %u", depth));
+		request_headers.Append(FmtBuffer<40>("depth: {}", depth));
 		request_headers.Append("content-type: text/xml");
 
-		request.SetOption(CURLOPT_HTTPHEADER, request_headers.Get());
+		easy.SetRequestHeaders(request_headers.Get());
 
-		request.SetOption(CURLOPT_POSTFIELDS,
-				  "<?xml version=\"1.0\"?>\n"
-				  "<a:propfind xmlns:a=\"DAV:\">"
-				  "<a:prop>"
-				  "<a:resourcetype/>"
-				  "<a:getcontenttype/>"
-				  "<a:getcontentlength/>"
-				  "<a:getlastmodified/>"
-				  "</a:prop>"
-				  "</a:propfind>");
+		easy.SetRequestBody("<?xml version=\"1.0\"?>\n"
+				    "<a:propfind xmlns:a=\"DAV:\">"
+				    "<a:prop>"
+				    "<a:resourcetype/>"
+				    "<a:getcontenttype/>"
+				    "<a:getcontentlength/>"
+				    "<a:getlastmodified/>"
+				    "</a:prop>"
+				    "</a:propfind>"sv);
 	}
 
 	using BlockingHttpRequest::GetEasy;
@@ -302,16 +295,15 @@ private:
 	void OnHeaders(unsigned status, Curl::Headers &&headers) final {
 		if (status != 207)
 			throw HttpStatusError(status,
-					      StringFormat<80>("Status %u from WebDAV server; expected \"207 Multi-Status\"",
-							       status).c_str());
+					      FmtBuffer<80>("Status {} from WebDAV server; expected \"207 Multi-Status\"",
+							    status));
 
 		if (!IsXmlContentType(headers))
 			throw std::runtime_error("Unexpected Content-Type from WebDAV server");
 	}
 
-	void OnData(ConstBuffer<void> _data) final {
-		const auto data = ConstBuffer<char>::FromVoid(_data);
-		Parse(data.data, data.size);
+	void OnData(std::span<const std::byte> src) final {
+		Parse(ToStringView(src));
 	}
 
 	void OnEnd() final {
@@ -404,7 +396,7 @@ private:
 		}
 	}
 
-	void CharacterData(const XML_Char *s, int len) final {
+	void CharacterData(std::string_view s) final {
 		switch (state) {
 		case State::ROOT:
 		case State::PROPSTAT:
@@ -413,19 +405,19 @@ private:
 			break;
 
 		case State::HREF:
-			response.href.append(s, len);
+			response.href.append(s);
 			break;
 
 		case State::STATUS:
-			response.status = ParseStatus(s, len);
+			response.status = ParseStatus(s);
 			break;
 
 		case State::MTIME:
-			response.mtime = ParseTimeStamp(s, len);
+			response.mtime = ParseTimeStamp(s);
 			break;
 
 		case State::LENGTH:
-			response.length = ParseU64(s, len);
+			response.length = ParseU64(s);
 			break;
 		}
 	}
@@ -472,7 +464,7 @@ CurlStorage::GetInfo(std::string_view uri_utf8, [[maybe_unused]] bool follow)
 	return HttpGetInfoOperation(*curl, uri.c_str()).Perform();
 }
 
-gcc_pure
+[[gnu::pure]]
 static std::string_view
 UriPathOrSlash(const char *uri) noexcept
 {
@@ -510,29 +502,29 @@ private:
 	 * Convert a "href" attribute (which may be an absolute URI)
 	 * to the base file name.
 	 */
-	gcc_pure
-	StringView HrefToEscapedName(const char *href) const noexcept {
-		StringView path = uri_get_path(href);
-		if (path == nullptr)
-			return nullptr;
+	[[gnu::pure]]
+	std::string_view HrefToEscapedName(const char *href) const noexcept {
+		std::string_view path = uri_get_path(href);
+		if (path.data() == nullptr)
+			return {};
 
 		/* kludge: ignoring case in this comparison to avoid
 		   false negatives if the web server uses a different
 		   case */
 		path = StringAfterPrefixIgnoreCase(path, base_path.c_str());
-		if (path == nullptr || path.empty())
-			return nullptr;
+		if (path.empty())
+			return {};
 
-		const char *slash = path.Find('/');
-		if (slash == nullptr)
+		const auto slash = path.find('/');
+		if (slash == path.npos)
 			/* regular file */
 			return path;
-		else if (slash == &path.back())
+		else if (slash + 1 == path.size())
 			/* trailing slash: collection; strip the slash */
-			return {path.data, slash};
+			return path.substr(0, slash);
 		else
 			/* strange, better ignore it */
-			return nullptr;
+			return {};
 	}
 
 protected:
@@ -543,10 +535,10 @@ protected:
 
 		std::string href = CurlUnescape(GetEasy(), r.href.c_str());
 		const auto name = HrefToEscapedName(href.c_str());
-		if (name.IsNull())
+		if (name.data() == nullptr)
 			return;
 
-		entries.emplace_front(std::string(name.data, name.size));
+		entries.emplace_front(name);
 
 		auto &info = entries.front().info;
 		info = StorageFileInfo(r.collection

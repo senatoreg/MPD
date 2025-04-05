@@ -1,36 +1,9 @@
-/*
- * Copyright 2013-2021 Max Kellermann <max.kellermann@gmail.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * - Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *
- * - Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the
- * distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
- * FOUNDATION OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-2-Clause
+// author: Max Kellermann <max.kellermann@gmail.com>
 
 #ifndef WSTRING_COMPARE_HXX
 #define WSTRING_COMPARE_HXX
 
-#include "WStringView.hxx"
 #include "WStringAPI.hxx"
 
 #include <string_view>
@@ -38,18 +11,17 @@
 #include <wchar.h>
 
 [[gnu::pure]] [[gnu::nonnull]]
-static inline bool
+static constexpr bool
 StringIsEmpty(const wchar_t *string) noexcept
 {
 	return *string == 0;
 }
 
 [[gnu::pure]]
-static inline bool
+static constexpr bool
 StringIsEqual(std::wstring_view a, std::wstring_view b) noexcept
 {
-	return a.size() == b.size() &&
-		StringIsEqual(a.data(), b.data(), b.size());
+	return a == b;
 }
 
 [[gnu::pure]]
@@ -62,9 +34,9 @@ StringIsEqualIgnoreCase(std::wstring_view a, std::wstring_view b) noexcept
 
 [[gnu::pure]] [[gnu::nonnull]]
 static inline bool
-StringStartsWith(const wchar_t *haystack, WStringView needle) noexcept
+StringStartsWith(const wchar_t *haystack, std::wstring_view needle) noexcept
 {
-	return StringIsEqual(haystack, needle.data, needle.size);
+	return StringIsEqual(haystack, needle.data(), needle.size());
 }
 
 [[gnu::pure]] [[gnu::nonnull]]
@@ -83,19 +55,19 @@ StringEndsWithIgnoreCase(const wchar_t *haystack,
  */
 [[gnu::pure]] [[gnu::nonnull]]
 static inline const wchar_t *
-StringAfterPrefix(const wchar_t *haystack, WStringView needle) noexcept
+StringAfterPrefix(const wchar_t *haystack, std::wstring_view needle) noexcept
 {
 	return StringStartsWith(haystack, needle)
-		? haystack + needle.size
+		? haystack + needle.size()
 		: nullptr;
 }
 
 [[gnu::pure]] [[gnu::nonnull]]
 static inline bool
 StringStartsWithIgnoreCase(const wchar_t *haystack,
-			   WStringView needle) noexcept
+			   std::wstring_view needle) noexcept
 {
-	return StringIsEqualIgnoreCase(haystack, needle.data, needle.size);
+	return StringIsEqualIgnoreCase(haystack, needle.data(), needle.size());
 }
 
 /**
@@ -106,10 +78,11 @@ StringStartsWithIgnoreCase(const wchar_t *haystack,
  */
 [[gnu::pure]] [[gnu::nonnull]]
 static inline const wchar_t *
-StringAfterPrefixIgnoreCase(const wchar_t *haystack, WStringView needle) noexcept
+StringAfterPrefixIgnoreCase(const wchar_t *haystack,
+			    std::wstring_view needle) noexcept
 {
 	return StringStartsWithIgnoreCase(haystack, needle)
-		? haystack + needle.size
+		? haystack + needle.size()
 		: nullptr;
 }
 

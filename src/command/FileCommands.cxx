@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "config.h"
 #include "FileCommands.hxx"
@@ -27,7 +11,6 @@
 #include "util/OffsetPointer.hxx"
 #include "util/ScopeExit.hxx"
 #include "util/StringCompare.hxx"
-#include "util/StringView.hxx"
 #include "util/UriExtract.hxx"
 #include "tag/Handler.hxx"
 #include "tag/Generic.hxx"
@@ -51,14 +34,14 @@
 #include <cassert>
 #include <array>
 
-gcc_pure
+[[gnu::pure]]
 static bool
 SkipNameFS(PathTraitsFS::const_pointer name_fs) noexcept
 {
 	return PathTraitsFS::IsSpecialFilename(name_fs);
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
 skip_path(Path name_fs) noexcept
 {
@@ -100,9 +83,9 @@ handle_listfiles_local(Response &r, Path path_fs)
 	return CommandResult::OK;
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-IsValidName(const StringView s) noexcept
+IsValidName(const std::string_view s) noexcept
 {
 	if (s.empty() || !IsAlphaASCII(s.front()))
 		return false;
@@ -112,9 +95,9 @@ IsValidName(const StringView s) noexcept
 	});
 }
 
-gcc_pure
+[[gnu::pure]]
 static bool
-IsValidValue(const StringView s) noexcept
+IsValidValue(const std::string_view s) noexcept
 {
 	return std::none_of(s.begin(), s.end(), [](const auto &ch) { return (unsigned char)ch < 0x20; });
 }
@@ -126,8 +109,7 @@ public:
 	explicit PrintCommentHandler(Response &_response) noexcept
 		:NullTagHandler(WANT_PAIR), response(_response) {}
 
-	void OnPair(StringView _key, StringView _value) noexcept override {
-		const std::string_view key{_key}, value{_value};
+	void OnPair(std::string_view key, std::string_view value) noexcept override {
 		if (IsValidName(key) && IsValidValue(value))
 			response.Fmt("{}: {}\n", key, value);
 	}
@@ -136,7 +118,7 @@ public:
 CommandResult
 handle_read_comments(Client &client, Request args, Response &r)
 {
-	assert(args.size == 1);
+	assert(args.size() == 1);
 
 	const char *const uri = args.front();
 
@@ -164,7 +146,7 @@ find_stream_art(std::string_view directory, Mutex &mutex)
 		std::string art_file = PathTraitsUTF8::Build(directory, name);
 
 		try {
-			return InputStream::OpenReady(art_file.c_str(), mutex);
+			return InputStream::OpenReady(art_file, mutex);
 		} catch (...) {
 			auto e = std::current_exception();
 			if (!IsFileNotFound(e))
@@ -209,16 +191,16 @@ read_stream_art(Response &r, const std::string_view art_directory,
 		std::min<offset_type>(art_file_size - offset,
 				      r.GetClient().binary_limit);
 
-	auto buffer = std::make_unique<std::byte[]>(buffer_size);
+	auto buffer = std::make_unique_for_overwrite<std::byte[]>(buffer_size);
 
 	std::size_t read_size = 0;
 	if (buffer_size > 0) {
-		std::unique_lock<Mutex> lock(is->mutex);
+		std::unique_lock lock{is->mutex};
 		is->Seek(lock, offset);
 
 		const bool was_ready = is->IsReady();
 
-		read_size = is->Read(lock, buffer.get(), buffer_size);
+		read_size = is->Read(lock, {buffer.get(), buffer_size});
 
 		if (was_ready && read_size < buffer_size / 2)
 			/* the InputStream was ready before, but we
@@ -227,8 +209,7 @@ read_stream_art(Response &r, const std::string_view art_directory,
 			   any I/O; let's wait for the next low-level
 			   read to complete to get more data for the
 			   client */
-			read_size += is->Read(lock, buffer.get() + read_size,
-					      buffer_size - read_size);
+			read_size += is->Read(lock, {buffer.get() + read_size, buffer_size - read_size});
 	}
 
 	r.Fmt("size: {}\n", art_file_size);
@@ -299,7 +280,7 @@ read_db_art(Client &client, Response &r, const char *uri, const uint64_t offset)
 CommandResult
 handle_album_art(Client &client, Request args, Response &r)
 {
-	assert(args.size == 2);
+	assert(args.size() == 2);
 
 	const char *uri = args.front();
 	size_t offset = args.ParseUnsigned(1);
@@ -349,29 +330,28 @@ public:
 	}
 
 	void OnPicture(const char *mime_type,
-		       ConstBuffer<void> buffer) noexcept override {
+		       std::span<const std::byte> buffer) noexcept override {
 		if (found)
 			/* only use the first picture */
 			return;
 
 		found = true;
 
-		if (offset > buffer.size) {
+		if (offset > buffer.size()) {
 			bad_offset = true;
 			return;
 		}
 
-		response.Fmt("size: {}\n", buffer.size);
+		    response.Fmt("size: {}\n", buffer.size());
 
 		if (mime_type != nullptr)
 			response.Fmt("type: {}\n", mime_type);
 
-		buffer.size -= offset;
+		buffer = buffer.subspan(offset);
 
 		const std::size_t binary_limit = response.GetClient().binary_limit;
-		if (buffer.size > binary_limit)
-			buffer.size = binary_limit;
-		buffer.data = OffsetPointer(buffer.data, offset);
+		if (buffer.size() > binary_limit)
+			buffer = buffer.first(binary_limit);
 
 		response.WriteBinary(buffer);
 	}
@@ -380,7 +360,7 @@ public:
 CommandResult
 handle_read_picture(Client &client, Request args, Response &r)
 {
-	assert(args.size == 2);
+	assert(args.size() == 2);
 
 	const char *const uri = args.front();
 	const size_t offset = args.ParseUnsigned(1);

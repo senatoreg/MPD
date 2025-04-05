@@ -1,21 +1,5 @@
-/*
- * Copyright 2003-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #include "HttpdOutputPlugin.hxx"
 #include "HttpdInternal.hxx"
@@ -28,11 +12,13 @@
 #include "Page.hxx"
 #include "IcyMetaDataServer.hxx"
 #include "event/Call.hxx"
+#include "net/DscpParser.hxx"
 #include "util/Domain.hxx"
 #include "util/DeleteDisposer.hxx"
 #include "config/Net.hxx"
 
 #include <cassert>
+#include <stdexcept>
 
 #include <string.h>
 
@@ -43,14 +29,20 @@ HttpdOutput::HttpdOutput(EventLoop &_loop, const ConfigBlock &block)
 	:AudioOutput(FLAG_ENABLE_DISABLE|FLAG_PAUSE),
 	 ServerSocket(_loop),
 	 prepared_encoder(CreateConfiguredEncoder(block)),
-	 defer_broadcast(_loop, BIND_THIS_METHOD(OnDeferredBroadcast))
+	 defer_broadcast(_loop, BIND_THIS_METHOD(OnDeferredBroadcast)),
+	 name(block.GetBlockValue("name", "Set name in config")),
+	 genre(block.GetBlockValue("genre", "Set genre in config")),
+	 website(block.GetBlockValue("website", "Set website in config")),
+	 clients_max(block.GetBlockValue("max_clients", 0U))
 {
-	/* read configuration */
-	name = block.GetBlockValue("name", "Set name in config");
-	genre = block.GetBlockValue("genre", "Set genre in config");
-	website = block.GetBlockValue("website", "Set website in config");
+	if (const auto *p = block.GetBlockParam("dscp_class"))
+		p->With([this](const char *s){
+			const int value = ParseDscpClass(s);
+			if (value < 0)
+				throw std::runtime_error("Not a valid DSCP class");
 
-	clients_max = block.GetBlockValue("max_clients", 0U);
+			ServerSocket::SetDscpClass(value);
+		});
 
 	/* set up bind_to_address */
 
@@ -104,7 +96,7 @@ HttpdOutput::OnDeferredBroadcast() noexcept
 	/* this method runs in the IOThread; it broadcasts pages from
 	   our own queue to all clients */
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	while (!pages.empty()) {
 		PagePtr page = std::move(pages.front());
@@ -121,12 +113,12 @@ HttpdOutput::OnDeferredBroadcast() noexcept
 
 void
 HttpdOutput::OnAccept(UniqueSocketDescriptor fd,
-		      SocketAddress, [[maybe_unused]] int uid) noexcept
+		      SocketAddress) noexcept
 {
 	/* the listener socket has become readable - a client has
 	   connected */
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	/* can we allow additional client */
 	if (open && (clients_max == 0 || clients.size() < clients_max))
@@ -134,7 +126,7 @@ HttpdOutput::OnAccept(UniqueSocketDescriptor fd,
 }
 
 PagePtr
-HttpdOutput::ReadPage()
+HttpdOutput::ReadPage() noexcept
 {
 	if (unflushed_input >= 65536) {
 		/* we have fed a lot of input into the encoder, but it
@@ -149,22 +141,41 @@ HttpdOutput::ReadPage()
 		unflushed_input = 0;
 	}
 
+	std::byte buffer[32768];
+
 	size_t size = 0;
 	do {
-		size_t nbytes = encoder->Read(buffer + size,
-					      sizeof(buffer) - size);
-		if (nbytes == 0)
+		const auto b = std::span{buffer}.subspan(size);
+		const auto r = encoder->Read(b);
+		if (r.empty())
 			break;
 
 		unflushed_input = 0;
 
-		size += nbytes;
+		if (r.data() != b.data()) {
+			if (size == 0 && r.size() >= sizeof(buffer) / 2)
+				/* if the returned memory area is
+				   large (and nothing has been written
+				   to the stack buffer yet), copy
+				   right from the returned memory
+				   area, avoiding the copy into the
+				   buffer*/
+				return std::make_shared<Page>(r);
+
+			/* if the encoder did not write to the given
+			   buffer but instead returned its own buffer,
+			   we need to copy it so we have a contiguous
+			   buffer */
+			std::copy(r.begin(), r.end(), b.begin());
+		}
+
+		size += r.size();
 	} while (size < sizeof(buffer));
 
 	if (size == 0)
 		return nullptr;
 
-	return std::make_shared<Page>(ConstBuffer{buffer, size});
+	return std::make_shared<Page>(std::span{buffer, size});
 }
 
 inline void
@@ -186,7 +197,7 @@ HttpdOutput::Open(AudioFormat &audio_format)
 	assert(!open);
 	assert(clients.empty());
 
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	OpenEncoder(audio_format);
 
@@ -208,7 +219,7 @@ HttpdOutput::Close() noexcept
 	BlockingCall(GetEventLoop(), [this](){
 			defer_broadcast.Cancel();
 
-			const std::scoped_lock<Mutex> protect(mutex);
+			const std::scoped_lock protect{mutex};
 			open = false;
 			clients.clear_and_dispose(DeleteDisposer());
 		});
@@ -261,7 +272,7 @@ HttpdOutput::BroadcastPage(PagePtr page) noexcept
 	assert(page != nullptr);
 
 	{
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		pages.emplace(std::move(page));
 	}
 
@@ -269,11 +280,11 @@ HttpdOutput::BroadcastPage(PagePtr page) noexcept
 }
 
 void
-HttpdOutput::BroadcastFromEncoder()
+HttpdOutput::BroadcastFromEncoder() noexcept
 {
 	/* synchronize with the IOThread */
 	{
-		std::unique_lock<Mutex> lock(mutex);
+		std::unique_lock lock{mutex};
 		cond.wait(lock, [this]{ return pages.empty(); });
 	}
 
@@ -281,7 +292,7 @@ HttpdOutput::BroadcastFromEncoder()
 
 	PagePtr page;
 	while ((page = ReadPage()) != nullptr) {
-		const std::scoped_lock<Mutex> lock(mutex);
+		const std::scoped_lock lock{mutex};
 		pages.emplace(std::move(page));
 		empty = false;
 	}
@@ -291,28 +302,28 @@ HttpdOutput::BroadcastFromEncoder()
 }
 
 inline void
-HttpdOutput::EncodeAndPlay(const void *chunk, size_t size)
+HttpdOutput::EncodeAndPlay(std::span<const std::byte> src)
 {
-	encoder->Write(chunk, size);
+	encoder->Write(src);
 
-	unflushed_input += size;
+	unflushed_input += src.size();
 
 	BroadcastFromEncoder();
 }
 
-size_t
-HttpdOutput::Play(const void *chunk, size_t size)
+std::size_t
+HttpdOutput::Play(std::span<const std::byte> src)
 {
 	pause = false;
 
 	if (LockHasClients())
-		EncodeAndPlay(chunk, size);
+		EncodeAndPlay(src);
 
 	if (!timer->IsStarted())
 		timer->Start();
-	timer->Add(size);
+	timer->Add(src.size());
 
-	return size;
+	return src.size();
 }
 
 bool
@@ -321,8 +332,8 @@ HttpdOutput::Pause()
 	pause = true;
 
 	if (LockHasClients()) {
-		static const char silence[1020] = { 0 };
-		Play(silence, sizeof(silence));
+		static constexpr std::byte silence[1020]{};
+		Play(std::span{silence});
 	}
 
 	return true;
@@ -373,7 +384,7 @@ HttpdOutput::SendTag(const Tag &tag)
 
 		metadata = icy_server_metadata_page(tag, &types[0]);
 		if (metadata != nullptr) {
-			const std::scoped_lock<Mutex> protect(mutex);
+			const std::scoped_lock protect{mutex};
 			for (auto &client : clients)
 				client.PushMetaData(metadata);
 		}
@@ -383,7 +394,7 @@ HttpdOutput::SendTag(const Tag &tag)
 inline void
 HttpdOutput::CancelAllClients() noexcept
 {
-	const std::scoped_lock<Mutex> protect(mutex);
+	const std::scoped_lock protect{mutex};
 
 	while (!pages.empty()) {
 		PagePtr page = std::move(pages.front());

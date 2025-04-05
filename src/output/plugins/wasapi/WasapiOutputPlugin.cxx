@@ -1,21 +1,5 @@
-/*
- * Copyright 2020-2021 The Music Player Daemon Project
- * http://www.musicpd.org
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright The Music Player Daemon Project
 
 #undef NOUSER // COM needs the "MSG" typedef
 
@@ -27,7 +11,8 @@
 #include "output/OutputAPI.hxx"
 #include "lib/icu/Win32.hxx"
 #include "lib/fmt/AudioFormatFormatter.hxx"
-#include "mixer/MixerList.hxx"
+#include "lib/fmt/RuntimeError.hxx"
+#include "mixer/plugins/WasapiMixerPlugin.hxx"
 #include "output/Error.hxx"
 #include "pcm/Export.hxx"
 #include "thread/Cond.hxx"
@@ -35,9 +20,8 @@
 #include "thread/Name.hxx"
 #include "thread/Thread.hxx"
 #include "util/AllocatedString.hxx"
-#include "util/ConstBuffer.hxx"
 #include "util/Domain.hxx"
-#include "util/RuntimeError.hxx"
+#include "util/RingBuffer.hxx"
 #include "util/ScopeExit.hxx"
 #include "util/StringBuffer.hxx"
 #include "win32/Com.hxx"
@@ -47,8 +31,6 @@
 #include "win32/WinEvent.hxx"
 #include "Log.hxx"
 #include "config.h"
-
-#include <boost/lockfree/spsc_queue.hpp>
 
 #include <algorithm>
 #include <cinttypes>
@@ -188,13 +170,14 @@ class WasapiOutputThread {
 
 	enum class Status : uint32_t { FINISH, PLAY, PAUSE };
 
-	alignas(BOOST_LOCKFREE_CACHELINE_BYTES) std::atomic<Status> status =
+	alignas(std::hardware_destructive_interference_size) std::atomic<Status> status =
 		Status::PAUSE;
-	alignas(BOOST_LOCKFREE_CACHELINE_BYTES) struct {
+	alignas(std::hardware_destructive_interference_size) struct {
 		std::atomic_bool occur = false;
 		std::exception_ptr ptr = nullptr;
 	} error;
-	boost::lockfree::spsc_queue<BYTE> spsc_buffer;
+
+	RingBuffer<std::byte> ring_buffer;
 
 public:
 	WasapiOutputThread(IAudioClient &_client,
@@ -204,7 +187,7 @@ public:
 		:client(_client),
 		 render_client(std::move(_render_client)), frame_size(_frame_size),
 		 buffer_size_in_frames(_buffer_size_in_frames), is_exclusive(_is_exclusive),
-		 spsc_buffer(_buffer_size_in_frames * 4 * _frame_size)
+		 ring_buffer(_buffer_size_in_frames * 4 * _frame_size)
 	{
 		SetEventHandle(client, event.handle());
 		thread.Start();
@@ -228,12 +211,10 @@ public:
 		SetStatus(Status::PAUSE);
 	}
 
-	std::size_t Push(ConstBuffer<void> input) noexcept {
+	std::size_t Push(std::span<const std::byte> input) noexcept {
 		empty.store(false);
 
-		std::size_t consumed =
-			spsc_buffer.push(static_cast<const BYTE *>(input.data),
-					 input.size);
+		std::size_t consumed = ring_buffer.WriteFrom(input);
 
 		if (!playing) {
 			playing = true;
@@ -358,7 +339,7 @@ public:
 	}
 	void Close() noexcept override;
 	std::chrono::steady_clock::duration Delay() const noexcept override;
-	size_t Play(const void *chunk, size_t size) override;
+	std::size_t Play(std::span<const std::byte> src) override;
 	void Drain() override;
 	void Cancel() noexcept override;
 	bool Pause() override;
@@ -440,7 +421,7 @@ try {
 		event.Wait();
 
 		if (cancel.load()) {
-			spsc_buffer.consume_all([](auto &&) {});
+			ring_buffer.Discard();
 			cancel.store(false);
 			empty.store(true);
 			InterruptWaiter();
@@ -499,8 +480,9 @@ try {
 		}
 
 		const UINT32 write_size = write_in_frames * frame_size;
-		UINT32 new_data_size = 0;
-		new_data_size = spsc_buffer.pop(data, write_size);
+		std::span w{data, write_size};
+
+		const std::size_t new_data_size = ring_buffer.ReadTo(std::as_writable_bytes(w));
 		if (new_data_size == 0)
 			empty.store(true);
 
@@ -702,14 +684,14 @@ WasapiOutput::Delay() const noexcept
 {
 	if (paused) {
 		// idle while paused
-		return std::chrono::seconds(1);
+		return std::chrono::steady_clock::duration::max();
 	}
 
 	return std::chrono::steady_clock::duration::zero();
 }
 
-size_t
-WasapiOutput::Play(const void *chunk, size_t size)
+std::size_t
+WasapiOutput::Play(std::span<const std::byte> input)
 {
 	assert(thread);
 
@@ -717,15 +699,14 @@ WasapiOutput::Play(const void *chunk, size_t size)
 
 	not_interrupted.test_and_set();
 
-	ConstBuffer<void> input(chunk, size);
 	if (pcm_export) {
 		input = pcm_export->Export(input);
 	}
 	if (input.empty())
-		return size;
+		return input.size();
 
 	do {
-		const size_t consumed_size = thread->Push({input.data, input.size});
+		const size_t consumed_size = thread->Push(input);
 
 		if (consumed_size == 0) {
 			thread->Wait();
@@ -808,8 +789,8 @@ WasapiOutput::ChooseDevice()
 		if (!SafeSilenceTry([this, &id]() { id = std::stoul(device_config); })) {
 			device = SearchDevice(*enumerator, device_config);
 			if (!device)
-				throw FormatRuntimeError("Device '%s' not found",
-							 device_config.c_str());
+				throw FmtRuntimeError("Device {:?} not found",
+						      device_config);
 		} else
 			device = GetDevice(*enumerator, id);
 	} else {
@@ -1026,7 +1007,7 @@ WasapiOutput::EnumerateDevices(IMMDeviceEnumerator &enumerator)
 			continue;
 
 		FmtNotice(wasapi_output_domain,
-			  "Device \"{}\" \"{}\"", i, name.c_str());
+			  "Device {:?} {:?}", i, name.c_str());
 	}
 }
 
