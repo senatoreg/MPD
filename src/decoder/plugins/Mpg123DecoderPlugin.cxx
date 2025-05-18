@@ -472,7 +472,7 @@ static const char *const mpg123_suffixes[] = {
 
 constexpr DecoderPlugin mpg123_decoder_plugin =
 	DecoderPlugin("mpg123",
-		      mpd_mpg123_stream_decode, mpd_mpg123_scan_stream,
+		      // mpd_mpg123_stream_decode, mpd_mpg123_scan_stream,
 		      mpd_mpg123_file_decode, mpd_mpg123_scan_file)
 	.WithInit(mpd_mpg123_init, mpd_mpg123_finish)
 	.WithSuffixes(mpg123_suffixes);
