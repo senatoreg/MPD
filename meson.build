@@ -1,7 +1,7 @@
 project(
   'mpd',
   ['c', 'cpp'],
-  version: '0.24.2',
+  version: '0.24.3',
   meson_version: '>= 1.0',
   default_options: [
     'c_std=c11',
@@ -504,6 +504,7 @@ subdir('src/lib/expat')
 subdir('src/lib/ffmpeg')
 subdir('src/lib/gcrypt')
 subdir('src/lib/nfs')
+subdir('src/lib/nlohmann_json')
 subdir('src/lib/oss')
 subdir('src/lib/pcre')
 subdir('src/lib/pipewire')
@@ -512,7 +513,6 @@ subdir('src/lib/sndio')
 subdir('src/lib/sqlite')
 subdir('src/lib/systemd')
 subdir('src/lib/upnp')
-subdir('src/lib/yajl')
 
 subdir('src/lib/crypto')
 
