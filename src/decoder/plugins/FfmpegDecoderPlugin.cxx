@@ -704,18 +704,31 @@ ffmpeg_suffixes() noexcept
 		if (input_format->extensions != nullptr) {
 			for (const auto i : IterableSplitString(input_format->extensions, ','))
 				suffixes.emplace(i);
-		} else
+		} else {
+			if (StringIsEqual(input_format->name, "aiff"))
+				/* the "aiff" demuxer has no extension
+				   list, but we should treat "*.aif"
+				   just like "*.aiff" */
+				suffixes.emplace("aif"sv);
+
 			suffixes.emplace(input_format->name);
+		}
 	}
 
 	void *codec_opaque = nullptr;
 	while (const auto codec = av_codec_iterate(&codec_opaque)) {
+		if (codec->type != AVMEDIA_TYPE_AUDIO)
+			continue;
+
 		if (StringStartsWith(codec->name, "dsd_"sv)) {
 			/* FFmpeg was compiled with DSD support */
 			suffixes.emplace("dff"sv);
 			suffixes.emplace("dsf"sv);
 		} else if (StringIsEqual(codec->name, "dst")) {
 			suffixes.emplace("dst"sv);
+		} else if (StringIsEqual(codec->name, "opus") ||
+			   StringIsEqual(codec->name, "libopus")) {
+			suffixes.emplace("opus"sv);
 		} else if (StringStartsWith(codec->name, "wma"sv)) {
 			/* there are codecs "wmav1", "wmav2" etc. and
 			   they usually come in "*.wma" files */

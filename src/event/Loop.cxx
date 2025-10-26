@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // Copyright CM4all GmbH
-// author: Max Kellermann <mk@cm4all.com>
+// author: Max Kellermann <max.kellermann@ionos.com>
 
 #include "Loop.hxx"
 #include "DeferEvent.hxx"
@@ -415,7 +415,12 @@ EventLoop::UringWait(Event::Duration timeout) noexcept
            io_uring_prep_poll_multishot() is edge-triggered, so we
            have to consume all events to rearm it */
 
-	if (!epoll_ready) {
+	if (epoll_ready)
+		/* don't wait for io_uring completions if epoll is
+		   still ready */
+		timeout = Event::Duration{0};
+
+	{
 		struct __kernel_timespec timeout_buffer;
 		auto *kernel_timeout = ExportTimeoutKernelTimespec(timeout, timeout_buffer);
 		Uring::Queue &uring_queue = *uring;
